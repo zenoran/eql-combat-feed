@@ -14,6 +14,7 @@ class OverlayPreferences:
     encounter_timeout: int = 10
     show_pet: bool = True
     auto_quit_with_game: bool = False
+    minimize_to_tray: bool = False
     locked: bool = False
     position: QPoint | None = None
     size: QSize | None = None
@@ -39,6 +40,7 @@ class SettingsStore:
             encounter_timeout=self._bounded_int("display/encounter_timeout", 10, 3, 60),
             show_pet=self._settings.value("display/show_pet", True, bool),
             auto_quit_with_game=self._settings.value("app/auto_quit_with_game", False, bool),
+            minimize_to_tray=self._settings.value("app/minimize_to_tray", False, bool),
             locked=self._settings.value("window/locked", False, bool),
             position=position if isinstance(position, QPoint) else None,
             size=size if isinstance(size, QSize) else None,
@@ -61,6 +63,8 @@ class SettingsStore:
                 self._settings.setValue("window/locked", value)
             elif field == "auto_quit_with_game":
                 self._settings.setValue("app/auto_quit_with_game", value)
+            elif field == "minimize_to_tray":
+                self._settings.setValue("app/minimize_to_tray", value)
             elif field == "log_file":
                 self._settings.setValue("log/file", str(value) if value else "")
             else:

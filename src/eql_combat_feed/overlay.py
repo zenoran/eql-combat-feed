@@ -486,7 +486,7 @@ class CombatFeedOverlay(QWidget):
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 self._format_dps(self._dps.dps),
                 DPS_COLOR,
-                self._font("Segoe UI", 10, QFont.Weight.Black),
+                self._font("Segoe UI", 13, QFont.Weight.Black),
             )
 
     def _paint_header_divider(self, painter: QPainter, rect: QRectF) -> None:

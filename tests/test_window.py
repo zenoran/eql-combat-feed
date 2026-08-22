@@ -37,6 +37,25 @@ def test_control_window_is_normal_taskbar_window_and_close_requests_quit() -> No
     app.processEvents()
 
 
+def test_close_minimizes_to_tray_when_enabled() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = ControlWindow(OverlayPreferences(minimize_to_tray=True), QIcon())
+    quit_requested = []
+    window.quit_requested.connect(lambda: quit_requested.append(True))
+    window.show()
+
+    window.close()
+    assert quit_requested == []  # App keeps running in the tray...
+    assert not window.isVisible()  # ...with the window hidden, not destroyed.
+
+    window.show_and_raise()
+    assert window.isVisible()
+
+    window.allow_close()
+    window.close()
+    app.processEvents()
+
+
 def test_control_window_exposes_persisted_behavior_toggles() -> None:
     app = QApplication.instance() or QApplication([])
     preferences = OverlayPreferences(locked=True, show_pet=False, auto_quit_with_game=True)

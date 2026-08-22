@@ -54,6 +54,9 @@ class OptionsDialog(QDialog):
         self.auto_quit_with_game = QCheckBox("Automatically quit when EverQuest closes")
         self.auto_quit_with_game.setChecked(preferences.auto_quit_with_game)
 
+        self.minimize_to_tray = QCheckBox("Closing the control window minimizes to tray")
+        self.minimize_to_tray.setChecked(preferences.minimize_to_tray)
+
         self.locked = QCheckBox("Start and remain click-through until unlocked")
         self.locked.setChecked(preferences.locked)
 
@@ -75,6 +78,7 @@ class OptionsDialog(QDialog):
         form.addRow("End encounter after", self.encounter_timeout)
         form.addRow("Pet feed", self.show_pet)
         form.addRow("Game exit", self.auto_quit_with_game)
+        form.addRow("Close button", self.minimize_to_tray)
         form.addRow("EverQuest log", log_widget)
         form.addRow("Input mode", self.locked)
 
@@ -108,6 +112,7 @@ class OptionsDialog(QDialog):
             encounter_timeout=self.encounter_timeout.value(),
             show_pet=self.show_pet.isChecked(),
             auto_quit_with_game=self.auto_quit_with_game.isChecked(),
+            minimize_to_tray=self.minimize_to_tray.isChecked(),
             locked=self.locked.isChecked(),
             position=current.position,
             size=current.size,
@@ -136,5 +141,6 @@ class OptionsDialog(QDialog):
         self.encounter_timeout.setValue(defaults.encounter_timeout)
         self.show_pet.setChecked(defaults.show_pet)
         self.auto_quit_with_game.setChecked(defaults.auto_quit_with_game)
+        self.minimize_to_tray.setChecked(defaults.minimize_to_tray)
         self.locked.setChecked(defaults.locked)
         self.log_file.clear()

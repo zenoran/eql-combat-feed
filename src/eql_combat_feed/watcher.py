@@ -1,13 +1,76 @@
 """Discover and incrementally follow EverQuest Legends log files."""
 
 import os
+import sys
 from collections import deque
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import IO
 
 DEFAULT_WINDOWS_LOG_DIR = Path(
     r"C:\Users\Public\Daybreak Game Company\Installed Games\EverQuest Legends\Logs"
 )
+# Upper bound on how much of a rotated or rewritten log gets replayed. Veteran
+# EQ logs run to multiple gigabytes; slurping one in a single poll would freeze
+# the UI and balloon memory, so a restart only ever replays this much tail.
+MAX_REPLAY_BYTES = 4 * 1024 * 1024
+
+
+def _open_shared(path: Path, mode: str = "r") -> IO[str] | IO[bytes]:
+    """Open ``path`` for reading without denying deletion to other processes.
+
+    Python's builtin ``open`` on Windows omits ``FILE_SHARE_DELETE``, which
+    blocks log-trimming tools from deleting or renaming the log while the
+    overlay runs. Everywhere else the builtin already behaves correctly.
+    """
+    binary = "b" in mode
+    if sys.platform != "win32":
+        return path.open(mode) if binary else path.open(mode, encoding="utf-8", errors="replace")
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    generic_read = 0x80000000
+    share_read_write_delete = 0x00000001 | 0x00000002 | 0x00000004
+    open_existing = 3
+    file_attribute_normal = 0x80
+
+    create_file = ctypes.windll.kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+
+    handle = create_file(
+        str(path),
+        generic_read,
+        share_read_write_delete,
+        None,
+        open_existing,
+        file_attribute_normal,
+        None,
+    )
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise ctypes.WinError()
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except OSError:
+        ctypes.windll.kernel32.CloseHandle(handle)
+        raise
+    try:
+        if binary:
+            return os.fdopen(fd, mode)
+        return os.fdopen(fd, mode, encoding="utf-8", errors="replace")
+    except OSError:
+        os.close(fd)
+        raise
 
 
 def candidate_log_directories() -> Iterable[Path]:
@@ -45,7 +108,7 @@ def read_recent_lines(
         return []
     chunks: deque[bytes] = deque()
     remaining = max_bytes
-    with Path(path).open("rb") as handle:
+    with _open_shared(Path(path), "rb") as handle:
         handle.seek(0, os.SEEK_END)
         position = handle.tell()
         while position > 0 and remaining > 0:
@@ -74,11 +137,15 @@ class LogWatcher:
 
     def start(self, *, from_end: bool = True) -> None:
         self.close()
-        self._handle = self.path.open("r", encoding="utf-8", errors="replace")
+        self._handle = _open_shared(self.path)
         stat = self.path.stat()
         self._identity = (stat.st_dev, stat.st_ino)
         if from_end:
             self._handle.seek(0, os.SEEK_END)
+        elif stat.st_size > MAX_REPLAY_BYTES:
+            # Replay only a bounded tail of a replaced/rewritten log.
+            self._handle.seek(stat.st_size - MAX_REPLAY_BYTES)
+            self._handle.readline()  # Discard the almost-certainly-partial first line.
         self._capture_checkpoint()
 
     def poll(self) -> int:
@@ -121,7 +188,7 @@ class LogWatcher:
         if not self._checkpoint:
             return False
         try:
-            with self.path.open("rb") as probe:
+            with _open_shared(self.path, "rb") as probe:
                 probe.seek(self._checkpoint_offset)
                 current = probe.read(len(self._checkpoint))
         except OSError:
@@ -137,7 +204,7 @@ class LogWatcher:
         size = min(position, 64)
         self._checkpoint_offset = position - size
         try:
-            with self.path.open("rb") as probe:
+            with _open_shared(self.path, "rb") as probe:
                 probe.seek(self._checkpoint_offset)
                 self._checkpoint = probe.read(size)
         except OSError:

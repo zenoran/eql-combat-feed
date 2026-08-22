@@ -1,5 +1,10 @@
+import os
+import sys
 from pathlib import Path
 
+import pytest
+
+from eql_combat_feed import watcher as watcher_module
 from eql_combat_feed.watcher import LogWatcher, discover_log_file, read_recent_lines
 
 
@@ -87,3 +92,50 @@ def test_watcher_reopens_after_truncation(tmp_path: Path) -> None:
     watcher.poll()
     assert seen == ["replacement"]
     watcher.close()
+
+
+def test_restart_replays_only_a_bounded_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replaced multi-GB log must never be slurped whole; only a tail replays."""
+    log = tmp_path / "eqlog_Hero_freeport.txt"
+    lines = [f"line {index:04d}" for index in range(200)]  # 10 bytes per line
+    log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    monkeypatch.setattr(watcher_module, "MAX_REPLAY_BYTES", 105)
+    seen: list[str] = []
+    watcher = LogWatcher(log, seen.append)
+    watcher.start(from_end=False)
+    watcher.poll()
+    watcher.close()
+
+    assert seen  # the tail was delivered...
+    assert len(seen) < 20  # ...but nowhere near the whole file
+    assert seen[-1] == "line 0199"
+    # The line straddling the cut point was dropped, not delivered mangled.
+    assert all(line in lines for line in seen)
+
+
+def test_small_file_restart_still_replays_everything(tmp_path: Path) -> None:
+    log = tmp_path / "eqlog_Hero_freeport.txt"
+    log.write_text("first\nsecond\n", encoding="utf-8")
+    seen: list[str] = []
+    watcher = LogWatcher(log, seen.append)
+    watcher.start(from_end=False)
+    watcher.poll()
+    watcher.close()
+    assert seen == ["first", "second"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="FILE_SHARE_DELETE only matters on Windows")
+def test_watched_log_stays_deletable_on_windows(tmp_path: Path) -> None:
+    """Log-trimming tools must be able to delete the log while the overlay runs."""
+    log = tmp_path / "eqlog_Hero_freeport.txt"
+    log.write_text("old line\n", encoding="utf-8")
+    watcher = LogWatcher(log, lambda line: None)
+    watcher.start(from_end=True)
+    try:
+        os.remove(log)
+    finally:
+        watcher.close()
+    assert not log.exists()

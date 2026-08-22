@@ -29,6 +29,12 @@ opaque panel covering the game. No bundled combat-analysis suite.
 - Lets classes without pets hide the Pet overlay completely.
 - Remains local, read-only, and log-driven: no injection, game memory access,
   game-file changes, accounts, telemetry, or network transmission.
+- Watches exactly three keys for the **Ctrl+Alt+L** lock toggle. Click-through
+  overlays ignore all mouse input by design, so the unlock chord must work even
+  when the game has focus; the app polls the up/down state of Ctrl, Alt, and L
+  through the standard Windows `GetAsyncKeyState` call. It never sees, buffers,
+  or records anything you type — that is the entire keyboard surface, and the
+  [source](src/eql_combat_feed/hotkey.py) is short enough to check yourself.
 
 It intentionally ignores incoming damage, healing, resists, kills, damage shields,
 and unrelated combat. Those features belong in a full parser; this is not trying to
@@ -50,7 +56,9 @@ shortcuts.
 ## Normal app window
 
 EQL Combat Feed opens a standard Windows control window with a taskbar button and
-normal minimize/close controls. Closing that window quits the application. It shows:
+normal minimize/close controls. Closing that window quits the application, or
+minimizes it to the tray instead when **Closing the control window minimizes to
+tray** is enabled in Options. It shows:
 
 - Current log and application status
 - Whether EverQuest is running
@@ -77,7 +85,8 @@ persisted and can be changed later.
 - Double-click an unlocked overlay to clear its history.
 
 Options control text size, visible/history rows, encounter timeout, Pet visibility,
-EQ-close auto-quit behavior, log selection, and click-through state. All settings and
+EQ-close auto-quit behavior, close-button tray behavior, log selection, and
+click-through state. All settings and
 both overlay geometries persist.
 
 Only one instance runs at a time. Runtime errors are written to the platform's local

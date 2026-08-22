@@ -32,6 +32,7 @@ class ControlWindow(QMainWindow):
     def __init__(self, preferences: OverlayPreferences, icon: QIcon) -> None:
         super().__init__()
         self._allow_close = False
+        self._minimize_to_tray = preferences.minimize_to_tray
         self.setWindowTitle(f"EQL Combat Feed {__version__}")
         self.setWindowIcon(icon)
         self.setMinimumSize(500, 310)
@@ -125,6 +126,7 @@ class ControlWindow(QMainWindow):
             self.game_value.setStyleSheet("")
 
     def sync_preferences(self, preferences: OverlayPreferences) -> None:
+        self._minimize_to_tray = preferences.minimize_to_tray
         for widget, value in (
             (self.locked, preferences.locked),
             (self.show_pet, preferences.show_pet),
@@ -144,6 +146,11 @@ class ControlWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._allow_close:
+            event.accept()
+            return
+        if self._minimize_to_tray:
+            # Quit-on-last-window-closed is disabled, so accepting just hides
+            # the window; the app stays alive in the system tray.
             event.accept()
             return
         event.ignore()

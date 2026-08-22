@@ -21,6 +21,7 @@ def test_settings_round_trip_split_window_configuration(tmp_path: Path) -> None:
         encounter_timeout=14,
         show_pet=False,
         auto_quit_with_game=True,
+        minimize_to_tray=True,
         locked=True,
         position=QPoint(321, 654),
         size=QSize(900, 500),

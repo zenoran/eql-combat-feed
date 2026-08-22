@@ -30,6 +30,7 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
     dialog.encounter_timeout.setValue(14)
     dialog.show_pet.setChecked(False)
     dialog.auto_quit_with_game.setChecked(True)
+    dialog.minimize_to_tray.setChecked(True)
     dialog.locked.setChecked(True)
     log = tmp_path / "eqlog_Hero_freeport.txt"
     dialog.log_file.setText(str(log))
@@ -42,6 +43,7 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
     assert result.encounter_timeout == 14
     assert result.show_pet is False
     assert result.auto_quit_with_game is True
+    assert result.minimize_to_tray is True
     assert result.locked is True
     assert result.position == current.position
     assert result.size == current.size
