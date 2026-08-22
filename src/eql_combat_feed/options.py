@@ -57,6 +57,12 @@ class OptionsDialog(QDialog):
         self.minimize_to_tray = QCheckBox("Closing the control window minimizes to tray")
         self.minimize_to_tray.setChecked(preferences.minimize_to_tray)
 
+        self.hide_when_unfocused = QCheckBox("Hide overlays when EverQuest is not focused")
+        self.hide_when_unfocused.setChecked(preferences.hide_when_unfocused)
+
+        self.check_updates = QCheckBox("Check for updates at startup (one request to GitHub)")
+        self.check_updates.setChecked(preferences.check_updates)
+
         self.locked = QCheckBox("Start and remain click-through until unlocked")
         self.locked.setChecked(preferences.locked)
 
@@ -79,6 +85,8 @@ class OptionsDialog(QDialog):
         form.addRow("Pet feed", self.show_pet)
         form.addRow("Game exit", self.auto_quit_with_game)
         form.addRow("Close button", self.minimize_to_tray)
+        form.addRow("Focus", self.hide_when_unfocused)
+        form.addRow("Updates", self.check_updates)
         form.addRow("EverQuest log", log_widget)
         form.addRow("Input mode", self.locked)
 
@@ -113,6 +121,8 @@ class OptionsDialog(QDialog):
             show_pet=self.show_pet.isChecked(),
             auto_quit_with_game=self.auto_quit_with_game.isChecked(),
             minimize_to_tray=self.minimize_to_tray.isChecked(),
+            hide_when_unfocused=self.hide_when_unfocused.isChecked(),
+            check_updates=self.check_updates.isChecked(),
             locked=self.locked.isChecked(),
             position=current.position,
             size=current.size,
@@ -142,5 +152,7 @@ class OptionsDialog(QDialog):
         self.show_pet.setChecked(defaults.show_pet)
         self.auto_quit_with_game.setChecked(defaults.auto_quit_with_game)
         self.minimize_to_tray.setChecked(defaults.minimize_to_tray)
+        self.hide_when_unfocused.setChecked(defaults.hide_when_unfocused)
+        self.check_updates.setChecked(defaults.check_updates)
         self.locked.setChecked(defaults.locked)
         self.log_file.clear()

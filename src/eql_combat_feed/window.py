@@ -43,6 +43,10 @@ class ControlWindow(QMainWindow):
         heading.setStyleSheet("font-size: 20px; font-weight: 700;")
         subtitle = QLabel("Damage and DPS. That's it.")
         subtitle.setStyleSheet("color: #707780;")
+        self.update_label = QLabel()
+        self.update_label.setOpenExternalLinks(True)
+        self.update_label.setStyleSheet("font-weight: 600;")
+        self.update_label.setVisible(False)
 
         self.status_value = QLabel("Starting…")
         self.status_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -98,6 +102,7 @@ class ControlWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.addWidget(heading)
         layout.addWidget(subtitle)
+        layout.addWidget(self.update_label)
         layout.addSpacing(6)
         layout.addWidget(status_group)
         layout.addWidget(behavior_group)
@@ -135,6 +140,12 @@ class ControlWindow(QMainWindow):
             widget.blockSignals(True)
             widget.setChecked(value)
             widget.blockSignals(False)
+
+    def show_update_available(self, version: str, url: str) -> None:
+        self.update_label.setText(
+            f'Update available: <a href="{url}">v{version} — download</a>'
+        )
+        self.update_label.setVisible(True)
 
     def show_and_raise(self) -> None:
         self.showNormal()

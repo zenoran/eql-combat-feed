@@ -15,6 +15,8 @@ class OverlayPreferences:
     show_pet: bool = True
     auto_quit_with_game: bool = False
     minimize_to_tray: bool = False
+    hide_when_unfocused: bool = True
+    check_updates: bool = True
     locked: bool = False
     position: QPoint | None = None
     size: QSize | None = None
@@ -41,6 +43,8 @@ class SettingsStore:
             show_pet=self._settings.value("display/show_pet", True, bool),
             auto_quit_with_game=self._settings.value("app/auto_quit_with_game", False, bool),
             minimize_to_tray=self._settings.value("app/minimize_to_tray", False, bool),
+            hide_when_unfocused=self._settings.value("app/hide_when_unfocused", True, bool),
+            check_updates=self._settings.value("app/check_updates", True, bool),
             locked=self._settings.value("window/locked", False, bool),
             position=position if isinstance(position, QPoint) else None,
             size=size if isinstance(size, QSize) else None,
@@ -65,6 +69,10 @@ class SettingsStore:
                 self._settings.setValue("app/auto_quit_with_game", value)
             elif field == "minimize_to_tray":
                 self._settings.setValue("app/minimize_to_tray", value)
+            elif field == "hide_when_unfocused":
+                self._settings.setValue("app/hide_when_unfocused", value)
+            elif field == "check_updates":
+                self._settings.setValue("app/check_updates", value)
             elif field == "log_file":
                 self._settings.setValue("log/file", str(value) if value else "")
             else:

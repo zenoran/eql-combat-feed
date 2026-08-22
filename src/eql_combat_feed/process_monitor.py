@@ -1,5 +1,6 @@
 """EverQuest process detection and transition tracking."""
 
+import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
@@ -59,3 +60,30 @@ def is_game_running(
     except (psutil.AccessDenied, psutil.Error):
         return False
     return False
+
+
+def foreground_pid() -> int | None:
+    """PID of the process owning the foreground window. Windows only; else None."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value or None
+
+
+def pid_matches_process(
+    pid: int, process_names: Iterable[str] = ("eqgame.exe",)
+) -> bool:
+    """Whether ``pid`` belongs to one of the named executables."""
+    expected = {name.casefold() for name in process_names}
+    try:
+        return psutil.Process(pid).name().casefold() in expected
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.Error):
+        return False

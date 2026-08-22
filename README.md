@@ -27,8 +27,15 @@ opaque panel covering the game. No bundled combat-analysis suite.
 - Displays hits, abilities, misses, and critical damage immediately as they happen.
 - Keeps descriptions, attack icons, damage values, and DPS visually aligned.
 - Lets classes without pets hide the Pet overlay completely.
+- Hides both overlays automatically while EverQuest is not the focused window
+  (and shows them again when you interact with the feed itself). Disable in
+  Options if you prefer always-on overlays.
 - Remains local, read-only, and log-driven: no injection, game memory access,
-  game-file changes, accounts, telemetry, or network transmission.
+  game-file changes, accounts, or telemetry. The only network access is an
+  optional once-per-launch update check — a single anonymous HTTPS request to
+  the public GitHub releases API that sends nothing but a version string in
+  the User-Agent. Turn it off in Options and the app makes no connections at
+  all.
 - Watches exactly three keys for the **Ctrl+Alt+L** lock toggle. Click-through
   overlays ignore all mouse input by design, so the unlock chord must work even
   when the game has focus; the app polls the up/down state of Ctrl, Alt, and L
@@ -85,8 +92,8 @@ persisted and can be changed later.
 - Double-click an unlocked overlay to clear its history.
 
 Options control text size, visible/history rows, encounter timeout, Pet visibility,
-EQ-close auto-quit behavior, close-button tray behavior, log selection, and
-click-through state. All settings and
+EQ-close auto-quit behavior, close-button tray behavior, focus-based overlay
+hiding, the startup update check, log selection, and click-through state. All settings and
 both overlay geometries persist.
 
 Only one instance runs at a time. Runtime errors are written to the platform's local

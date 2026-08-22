@@ -1,6 +1,7 @@
 """Application orchestration: watcher, parser, split feeds, tray, and preferences."""
 
 import logging
+import os
 from pathlib import Path
 from time import monotonic
 
@@ -8,13 +9,21 @@ from PySide6.QtCore import QObject, QPoint, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
 
+from . import __version__
 from .dps import EncounterDpsMeter
 from .hotkey import GlobalLockHotkey
 from .options import OptionsDialog
 from .overlay import Actor, CombatFeedOverlay
 from .parser import EqlCombatParser, character_name_from_log
-from .process_monitor import GameProcessEvent, GameProcessTracker, is_game_running
+from .process_monitor import (
+    GameProcessEvent,
+    GameProcessTracker,
+    foreground_pid,
+    is_game_running,
+    pid_matches_process,
+)
 from .settings import SettingsStore
+from .update_check import UpdateChecker
 from .watcher import LogWatcher, discover_log_file, read_recent_lines
 from .window import ControlWindow
 
@@ -43,6 +52,9 @@ class CombatFeedController(QObject):
         self.game_tracker = GameProcessTracker()
         self._game_exit_prompt_open = False
         self._poll_failures = 0
+        self._overlays_hidden = False
+        self.update_checker = UpdateChecker(__version__, self)
+        self.update_checker.update_available.connect(self._on_update_available)
 
         self.app_icon = self._make_icon()
         self.app.setWindowIcon(self.app_icon)
@@ -72,6 +84,9 @@ class CombatFeedController(QObject):
         self.process_timer = QTimer(self)
         self.process_timer.setInterval(2000)
         self.process_timer.timeout.connect(self._poll_game_process)
+        self.focus_timer = QTimer(self)
+        self.focus_timer.setInterval(500)
+        self.focus_timer.timeout.connect(self._poll_focus)
 
         self.hotkey = GlobalLockHotkey(self.toggle_locked)
         self.app.installNativeEventFilter(self.hotkey)
@@ -85,12 +100,15 @@ class CombatFeedController(QObject):
         self.tray.show()
         self.animation_timer.start()
         self.process_timer.start()
+        self.focus_timer.start()
         self._requested_log = requested_log or self.preferences.log_file
         QTimer.singleShot(0, self._finish_startup)
 
     def _finish_startup(self) -> None:
         self._poll_game_process()
         self.open_log(self._requested_log)
+        if self.preferences.check_updates:
+            QTimer.singleShot(3000, self.update_checker.check)
 
     def _connect_overlay(self, overlay: CombatFeedOverlay, actor: Actor) -> None:
         overlay.context_requested.connect(self._show_menu)
@@ -105,6 +123,7 @@ class CombatFeedController(QObject):
         self.poll_timer.stop()
         self.animation_timer.stop()
         self.process_timer.stop()
+        self.focus_timer.stop()
         if self.watcher:
             self.watcher.close()
         self.hotkey.unregister()
@@ -210,7 +229,43 @@ class CombatFeedController(QObject):
         self.window.sync_preferences(self.preferences)
 
     def _apply_pet_visibility(self) -> None:
-        self.pet_overlay.setVisible(self.preferences.show_pet)
+        self._apply_overlay_visibility()
+
+    def _apply_overlay_visibility(self) -> None:
+        visible = not self._overlays_hidden
+        self.you_overlay.setVisible(visible)
+        self.pet_overlay.setVisible(visible and self.preferences.show_pet)
+
+    def _poll_focus(self) -> None:
+        hidden = self._should_hide_overlays()
+        if hidden != self._overlays_hidden:
+            self._overlays_hidden = hidden
+            self._apply_overlay_visibility()
+
+    def _should_hide_overlays(self) -> bool:
+        """Hide the overlays while another application has the foreground.
+
+        Only applies while the game is running, and never while this app
+        itself is foreground — otherwise the overlays could not be dragged,
+        resized, or configured.
+        """
+        if not self.preferences.hide_when_unfocused:
+            return False
+        if not self.game_tracker.running:
+            return False
+        pid = foreground_pid()
+        if pid is None or pid == os.getpid():
+            return False
+        return not pid_matches_process(pid)
+
+    def _on_update_available(self, version: str, url: str) -> None:
+        self.window.show_update_available(version, url)
+        self.tray.showMessage(
+            "EQL Combat Feed",
+            f"Update v{version} is available — open the control window to download.",
+            QSystemTrayIcon.MessageIcon.Information,
+            6000,
+        )
 
     def _save_position(self, actor: Actor, point: QPoint) -> None:
         if actor == "character":

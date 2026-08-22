@@ -322,3 +322,47 @@ def test_poll_log_survives_transient_read_errors_and_recovers(tmp_path: Path) ->
     assert controller.poll_timer.isActive()
 
     stop_controller(controller)
+
+
+def test_overlays_hide_when_game_unfocused_and_return_on_focus(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app, _, _, controller = make_controller(tmp_path)
+    controller_module = importlib.import_module("eql_combat_feed.controller")
+    controller.preferences.hide_when_unfocused = True
+    controller.game_tracker.running = True
+
+    # Another app owns the foreground -> hide both overlays.
+    monkeypatch.setattr(controller_module, "foreground_pid", lambda: 4242)
+    monkeypatch.setattr(controller_module, "pid_matches_process", lambda pid: False)
+    controller._poll_focus()
+    assert not controller.you_overlay.isVisible()
+    assert not controller.pet_overlay.isVisible()
+
+    # The game regains focus -> overlays return (pet obeys show_pet).
+    monkeypatch.setattr(controller_module, "pid_matches_process", lambda pid: True)
+    controller._poll_focus()
+    assert controller.you_overlay.isVisible()
+    assert controller.pet_overlay.isVisible() == controller.preferences.show_pet
+
+    # Our own process foreground (dragging/options) -> never hidden.
+    monkeypatch.setattr(controller_module, "pid_matches_process", lambda pid: False)
+    monkeypatch.setattr(controller_module, "foreground_pid", lambda: __import__("os").getpid())
+    controller._poll_focus()
+    assert controller.you_overlay.isVisible()
+
+    # Feature disabled -> always visible.
+    controller.preferences.hide_when_unfocused = False
+    monkeypatch.setattr(controller_module, "foreground_pid", lambda: 4242)
+    controller._poll_focus()
+    assert controller.you_overlay.isVisible()
+
+    stop_controller(controller)
+
+
+def test_update_notification_reaches_control_window(tmp_path: Path) -> None:
+    app, _, _, controller = make_controller(tmp_path)
+    controller._on_update_available("9.9.9", "https://example.invalid/rel")
+    assert controller.window.update_label.isVisible()
+    assert "9.9.9" in controller.window.update_label.text()
+    stop_controller(controller)
