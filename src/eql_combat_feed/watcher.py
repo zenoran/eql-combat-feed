@@ -83,11 +83,17 @@ def candidate_log_directories() -> Iterable[Path]:
 
 
 def discover_log_file(explicit: str | Path | None = None) -> Path | None:
-    """Find the requested log or newest ``eqlog_*.txt`` in known locations."""
+    """Find the requested log or newest ``eqlog_*.txt`` in known locations.
+
+    A requested path that no longer exists (stale saved preference, renamed
+    log) falls back to scanning the known directories instead of giving up —
+    a missing file must never permanently blind the feed.
+    """
     requested = explicit or os.environ.get("EQL_LOG_FILE")
     if requested:
         path = Path(requested).expanduser()
-        return path if path.is_file() else None
+        if path.is_file():
+            return path
 
     logs: list[Path] = []
     for directory in candidate_log_directories():
@@ -180,7 +186,9 @@ class LogWatcher:
             return False
         try:
             stat = self.path.stat()
-        except FileNotFoundError:
+        except OSError:
+            # Missing or momentarily unstat-able (AV scan, sharing hiccup):
+            # treat as "no change" and let a later poll sort it out.
             return False
         identity = (stat.st_dev, stat.st_ino)
         if identity != self._identity or stat.st_size < self._handle.tell():

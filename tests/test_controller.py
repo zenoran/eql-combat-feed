@@ -285,3 +285,40 @@ def test_game_stop_prompt_yes_quits_even_with_int_dialog_result(
 
     assert shutdowns == [True]
     stop_controller(controller)
+
+
+def test_poll_log_survives_transient_read_errors_and_recovers(tmp_path: Path) -> None:
+    """A burst of OSErrors (AV scan / recording lock) must never kill the feed."""
+    app, _, _, controller = make_controller(tmp_path)
+
+    class FlakyWatcher:
+        def __init__(self) -> None:
+            self.failures_left = 10
+            self.closes = 0
+            self.polls = 0
+
+        def poll(self) -> int:
+            self.polls += 1
+            if self.failures_left > 0:
+                self.failures_left -= 1
+                raise OSError("locked by something rude")
+            return 0
+
+        def close(self) -> None:
+            self.closes += 1
+
+    flaky = FlakyWatcher()
+    controller.watcher = flaky  # type: ignore[assignment]
+    controller.poll_timer.start()
+
+    for _ in range(10):
+        controller._poll_log()
+    assert controller.poll_timer.isActive()  # never permanently stopped
+    assert flaky.closes >= 1  # forced a clean reopen after sustained failure
+    assert controller._poll_failures == 10
+
+    controller._poll_log()  # first success
+    assert controller._poll_failures == 0
+    assert controller.poll_timer.isActive()
+
+    stop_controller(controller)

@@ -42,6 +42,7 @@ class CombatFeedController(QObject):
         self.dps_meter = EncounterDpsMeter(self.preferences.encounter_timeout)
         self.game_tracker = GameProcessTracker()
         self._game_exit_prompt_open = False
+        self._poll_failures = 0
 
         self.app_icon = self._make_icon()
         self.app.setWindowIcon(self.app_icon)
@@ -117,6 +118,7 @@ class CombatFeedController(QObject):
     def open_log(self, requested: str | Path | None = None) -> None:
         path = discover_log_file(requested)
         if path is None:
+            LOG.warning("No EQL log found (requested=%r)", requested)
             self._set_status("No EQL log found — right-click to choose one", error=True)
             self.poll_timer.stop()
             return
@@ -142,7 +144,9 @@ class CombatFeedController(QObject):
         self.settings.save_log_file(path)
         self._set_status(f"Watching {path.name}")
         self.tray.setToolTip(f"EQL Combat Feed\n{path.name}")
+        self._poll_failures = 0
         self.poll_timer.start()
+        LOG.info("Watching %s", path)
 
     def choose_log(self) -> None:
         initial = str(self.log_path.parent if self.log_path else Path.home())
@@ -284,20 +288,40 @@ class CombatFeedController(QObject):
         except OSError:
             LOG.exception("Unable to scan recent log for pet identity")
 
+    # ~1s of consecutive 150ms-poll failures before surfacing and reopening.
+    POLL_FAILURE_REOPEN_THRESHOLD = 7
+
     def _poll_log(self) -> None:
+        """Poll the log, riding out transient read errors instead of dying.
+
+        On Windows, antivirus scans, recording software, and the game itself
+        can briefly lock the log and fail a single read. That must NEVER
+        permanently stop the feed — we retry forever, forcing a clean reopen
+        after each ~1s of continuous failure, and restore the status line as
+        soon as a poll succeeds again.
+        """
         if self.watcher is None:
             return
         try:
             self.watcher.poll()
         except OSError as error:
-            LOG.exception("Log watcher failed")
-            self.poll_timer.stop()
-            self._set_status(f"Log read failed: {error}", error=True)
-            self.tray.showMessage(
-                "EQL Combat Feed",
-                f"Log read failed: {error}",
-                QSystemTrayIcon.MessageIcon.Critical,
-                5000,
+            self._poll_failures += 1
+            if self._poll_failures == 1:
+                LOG.exception("Log watcher poll failed; retrying")
+            if self._poll_failures % self.POLL_FAILURE_REOPEN_THRESHOLD == 0:
+                LOG.warning(
+                    "Log still unreadable after %d attempts (%s); reopening",
+                    self._poll_failures,
+                    error,
+                )
+                self._set_status(f"Log read hiccup — retrying ({error})", error=True)
+                self.watcher.close()  # next poll reopens from scratch
+            return
+        if self._poll_failures:
+            LOG.info("Log reads recovered after %d failed polls", self._poll_failures)
+            self._poll_failures = 0
+            self._set_status(
+                f"Watching {self.log_path.name}" if self.log_path else "Watching log"
             )
 
     def _poll_game_process(self) -> None:

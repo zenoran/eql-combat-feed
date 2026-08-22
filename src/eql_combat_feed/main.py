@@ -31,6 +31,16 @@ def configure_logging() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # Windowed executables have no stderr: an uncaught exception in a Qt
+    # timer/slot would vanish without a trace. Route it to the log file so a
+    # silent failure always leaves a corpse to autopsy.
+    def log_uncaught(exc_type, value, traceback) -> None:  # type: ignore[no-untyped-def]
+        logging.getLogger("eql_combat_feed.crash").critical(
+            "Unhandled exception", exc_info=(exc_type, value, traceback)
+        )
+
+    sys.excepthook = log_uncaught
+
 
 def configure_windows_identity() -> None:
     if sys.platform == "win32":

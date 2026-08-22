@@ -137,3 +137,14 @@ def test_watched_log_stays_deletable_on_windows(tmp_path: Path) -> None:
     finally:
         watcher.close()
     assert not log.exists()
+
+
+def test_stale_requested_log_falls_back_to_directory_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A saved-but-missing log path must not blind discovery permanently."""
+    real = tmp_path / "eqlog_Hero_freeport.txt"
+    real.write_text("", encoding="utf-8")
+    monkeypatch.setenv("EQL_LOG_DIR", str(tmp_path))
+    monkeypatch.delenv("EQL_LOG_FILE", raising=False)
+    assert discover_log_file(tmp_path / "eqlog_Gone_missing.txt") == real
