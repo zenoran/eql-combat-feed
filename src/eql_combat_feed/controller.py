@@ -327,7 +327,10 @@ class CombatFeedController(QObject):
             )
         finally:
             self._game_exit_prompt_open = False
-        if answer is QMessageBox.StandardButton.Yes:
+        # `==`, never `is`: QMessageBox.question returns a plain int (e.g.
+        # 16384), so identity against the enum member is always False and
+        # every answer would fall into the "keep running" branch.
+        if answer == QMessageBox.StandardButton.Yes:
             self.shutdown()
         else:
             self.window.show_and_raise()
@@ -366,7 +369,7 @@ class CombatFeedController(QObject):
             menu.popup(point)
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason is QSystemTrayIcon.ActivationReason.DoubleClick:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.window.show_and_raise()
 
     def _place_overlays(self) -> None:

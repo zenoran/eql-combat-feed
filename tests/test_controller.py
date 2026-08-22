@@ -261,3 +261,27 @@ def test_game_stop_prompt_can_keep_control_window_open(tmp_path: Path, monkeypat
     assert controller._game_exit_prompt_open is False
 
     stop_controller(controller)
+
+
+def test_game_stop_prompt_yes_quits_even_with_int_dialog_result(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """QMessageBox.question returns a plain int (16384), not the enum member.
+
+    Regression: `answer is StandardButton.Yes` was always False, so hitting
+    Yes restored the control window instead of quitting the app.
+    """
+    app, _, _, controller = make_controller(tmp_path)
+    controller.preferences.auto_quit_with_game = False
+    controller_module = importlib.import_module("eql_combat_feed.controller")
+    yes_as_int = int(controller_module.QMessageBox.StandardButton.Yes.value)  # 16384
+    monkeypatch.setattr(
+        controller_module.QMessageBox, "question", lambda *args, **kwargs: yes_as_int
+    )
+    shutdowns = []
+    controller.shutdown = lambda: shutdowns.append(True)  # type: ignore[method-assign]
+
+    controller._handle_game_stopped()
+
+    assert shutdowns == [True]
+    stop_controller(controller)
