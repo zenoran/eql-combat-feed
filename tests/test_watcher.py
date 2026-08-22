@@ -15,7 +15,7 @@ def test_explicit_log_discovery(tmp_path: Path) -> None:
     assert discover_log_file(tmp_path / "missing.txt") is None
 
 
-def test_recent_lines_reads_only_requested_tail() -> None:
+def test_recent_lines_reads_only_requested_tail(monkeypatch: pytest.MonkeyPatch) -> None:
     class BoundedFile:
         def __init__(self) -> None:
             self.position = 0
@@ -50,12 +50,10 @@ def test_recent_lines_reads_only_requested_tail() -> None:
             return value
 
     fake = BoundedFile()
-    original_open = Path.open
-    Path.open = lambda self, *args, **kwargs: fake  # type: ignore[method-assign]
-    try:
-        lines = read_recent_lines("ignored", max_lines=2, max_bytes=64 * 1024)
-    finally:
-        Path.open = original_open  # type: ignore[method-assign]
+    # Patch the opener seam, not Path.open — on Windows _open_shared goes
+    # through CreateFileW and never touches Path.open.
+    monkeypatch.setattr(watcher_module, "_open_shared", lambda path, mode="r": fake)
+    lines = read_recent_lines("ignored", max_lines=2, max_bytes=64 * 1024)
 
     assert lines == ["recent one", "recent two"]
     assert fake.read_sizes == [64 * 1024]
