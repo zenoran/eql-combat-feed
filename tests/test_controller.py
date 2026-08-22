@@ -351,9 +351,14 @@ def test_overlays_hide_when_game_unfocused_and_return_on_focus(
     controller._poll_focus()
     assert controller.you_overlay.isVisible()
 
+    # Game closed entirely -> still hidden while another app is foreground.
+    controller.game_tracker.running = False
+    monkeypatch.setattr(controller_module, "foreground_pid", lambda: 4242)
+    controller._poll_focus()
+    assert not controller.you_overlay.isVisible()
+
     # Feature disabled -> always visible.
     controller.preferences.hide_when_unfocused = False
-    monkeypatch.setattr(controller_module, "foreground_pid", lambda: 4242)
     controller._poll_focus()
     assert controller.you_overlay.isVisible()
 

@@ -243,15 +243,14 @@ class CombatFeedController(QObject):
             self._apply_overlay_visibility()
 
     def _should_hide_overlays(self) -> bool:
-        """Hide the overlays while another application has the foreground.
+        """Hide the overlays unless EverQuest or this app is foreground.
 
-        Only applies while the game is running, and never while this app
-        itself is foreground — otherwise the overlays could not be dragged,
-        resized, or configured.
+        A closed game is the ultimate form of unfocused, so the overlays are
+        hidden then too. Focusing the feed itself (control window, options,
+        or an overlay) always shows them so they can be dragged, resized,
+        and configured — including before the game has ever launched.
         """
         if not self.preferences.hide_when_unfocused:
-            return False
-        if not self.game_tracker.running:
             return False
         pid = foreground_pid()
         if pid is None or pid == os.getpid():
