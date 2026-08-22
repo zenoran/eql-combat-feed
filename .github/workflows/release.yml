@@ -1,0 +1,55 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev --extra build
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      - name: Run lint
+        run: uv run ruff check .
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build executable and installer
+        shell: powershell
+        run: .\packaging\windows\build.ps1
+
+      - name: Publish GitHub release
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content pyproject.toml | Select-String '^version = "(.+)"$').Matches.Groups[1].Value
+          $installer = "dist\EQL-Combat-Feed-Setup-$version.exe"
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $installer --clobber
+          } else {
+            gh release create $tag $installer --generate-notes --title "EQL Combat Feed $version"
+          }

@@ -1,0 +1,414 @@
+"""Application orchestration: watcher, parser, split feeds, tray, and preferences."""
+
+import logging
+from pathlib import Path
+from time import monotonic
+
+from PySide6.QtCore import QObject, QPoint, Qt, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
+
+from .dps import EncounterDpsMeter
+from .hotkey import GlobalLockHotkey
+from .options import OptionsDialog
+from .overlay import Actor, CombatFeedOverlay
+from .parser import EqlCombatParser, character_name_from_log
+from .process_monitor import GameProcessEvent, GameProcessTracker, is_game_running
+from .settings import SettingsStore
+from .watcher import LogWatcher, discover_log_file, read_recent_lines
+from .window import ControlWindow
+
+LOG = logging.getLogger(__name__)
+
+
+class CombatFeedController(QObject):
+    def __init__(
+        self,
+        app: QApplication,
+        requested_log: str | None = None,
+        settings: SettingsStore | None = None,
+    ) -> None:
+        super().__init__()
+        self.app = app
+        self.app.setQuitOnLastWindowClosed(False)
+        self.settings = settings or SettingsStore()
+        self.preferences = self.settings.load()
+        self.you_overlay = CombatFeedOverlay(self.preferences, "character")
+        self.pet_overlay = CombatFeedOverlay(self.preferences, "pet")
+        self.overlay = self.you_overlay  # Backwards-compatible primary-window alias.
+        self.parser: EqlCombatParser | None = None
+        self.watcher: LogWatcher | None = None
+        self.log_path: Path | None = None
+        self.dps_meter = EncounterDpsMeter(self.preferences.encounter_timeout)
+        self.game_tracker = GameProcessTracker()
+        self._game_exit_prompt_open = False
+
+        self.app_icon = self._make_icon()
+        self.app.setWindowIcon(self.app_icon)
+        self.window = ControlWindow(self.preferences, self.app_icon)
+        self.window.quit_requested.connect(self.shutdown)
+        self.window.lock_changed.connect(self.set_locked)
+        self.window.pet_visibility_changed.connect(self.set_show_pet)
+        self.window.auto_quit_changed.connect(self.set_auto_quit_with_game)
+        self.window.options_requested.connect(self.show_options)
+        self.window.choose_log_requested.connect(self.choose_log)
+        self.window.clear_requested.connect(self.clear)
+
+        self.tray = QSystemTrayIcon(self.app_icon, self.app)
+        self.tray.setToolTip("EQL Combat Feed")
+        self.tray.setContextMenu(self._build_menu())
+        self.tray.activated.connect(self._on_tray_activated)
+
+        self._connect_overlay(self.you_overlay, "character")
+        self._connect_overlay(self.pet_overlay, "pet")
+
+        self.poll_timer = QTimer(self)
+        self.poll_timer.setInterval(150)
+        self.poll_timer.timeout.connect(self._poll_log)
+        self.animation_timer = QTimer(self)
+        self.animation_timer.setInterval(50)
+        self.animation_timer.timeout.connect(self._tick)
+        self.process_timer = QTimer(self)
+        self.process_timer.setInterval(2000)
+        self.process_timer.timeout.connect(self._poll_game_process)
+
+        self.hotkey = GlobalLockHotkey(self.toggle_locked)
+        self.app.installNativeEventFilter(self.hotkey)
+        self.hotkey.register()
+
+        self._place_overlays()
+        self.set_locked(self.preferences.locked, notify=False)
+        self.you_overlay.show()
+        self._apply_pet_visibility()
+        self.window.show()
+        self.tray.show()
+        self.animation_timer.start()
+        self.process_timer.start()
+        self._requested_log = requested_log or self.preferences.log_file
+        QTimer.singleShot(0, self._finish_startup)
+
+    def _finish_startup(self) -> None:
+        self._poll_game_process()
+        self.open_log(self._requested_log)
+
+    def _connect_overlay(self, overlay: CombatFeedOverlay, actor: Actor) -> None:
+        overlay.context_requested.connect(self._show_menu)
+        overlay.options_requested.connect(self.show_options)
+        overlay.quit_requested.connect(self.shutdown)
+        overlay.position_changed.connect(
+            lambda point, actor=actor: self._save_position(actor, point)
+        )
+        overlay.size_changed.connect(lambda size, actor=actor: self._save_size(actor, size))
+
+    def shutdown(self) -> None:
+        self.poll_timer.stop()
+        self.animation_timer.stop()
+        self.process_timer.stop()
+        if self.watcher:
+            self.watcher.close()
+        self.hotkey.unregister()
+        self.tray.hide()
+        self.window.allow_close()
+        self.window.close()
+        self.you_overlay.close()
+        self.pet_overlay.close()
+        self.app.quit()
+
+    def open_log(self, requested: str | Path | None = None) -> None:
+        path = discover_log_file(requested)
+        if path is None:
+            self._set_status("No EQL log found — right-click to choose one", error=True)
+            self.poll_timer.stop()
+            return
+        try:
+            watcher = LogWatcher(path, self._handle_line)
+            watcher.start(from_end=True)
+        except OSError as error:
+            LOG.exception("Unable to open EQL log")
+            self._set_status(f"Cannot open {path.name}: {error}", error=True)
+            self.poll_timer.stop()
+            return
+
+        if self.watcher:
+            self.watcher.close()
+        self.log_path = path
+        self.watcher = watcher
+        self.parser = EqlCombatParser(character_name_from_log(path))
+        self.window.set_log_path(path)
+        self.dps_meter.reset()
+        self._update_dps_displays()
+        self._prime_pet_identity(path)
+        self.preferences.log_file = path
+        self.settings.save_log_file(path)
+        self._set_status(f"Watching {path.name}")
+        self.tray.setToolTip(f"EQL Combat Feed\n{path.name}")
+        self.poll_timer.start()
+
+    def choose_log(self) -> None:
+        initial = str(self.log_path.parent if self.log_path else Path.home())
+        selected, _ = QFileDialog.getOpenFileName(
+            self.window,
+            "Choose EverQuest log",
+            initial,
+            "EverQuest logs (eqlog_*.txt);;Text files (*.txt);;All files (*)",
+        )
+        if selected:
+            self.open_log(selected)
+
+    def toggle_locked(self) -> None:
+        self.set_locked(not self.you_overlay.locked)
+
+    def set_locked(self, locked: bool, *, notify: bool = True) -> None:
+        self.you_overlay.set_locked(locked)
+        self.pet_overlay.set_locked(locked)
+        self.preferences.locked = locked
+        self.settings.save_locked(locked)
+        self.lock_action.setChecked(locked)
+        self.window.sync_preferences(self.preferences)
+        if notify:
+            mode = "Locked — Ctrl+Alt+L to unlock" if locked else "Move mode — drag either window"
+            self.tray.showMessage(
+                "EQL Combat Feed", mode, QSystemTrayIcon.MessageIcon.Information, 1200
+            )
+
+    def show_options(self) -> None:
+        dialog = OptionsDialog(self.preferences, self.window)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        updated = dialog.result_preferences(self.preferences)
+        previous_log = self.log_path
+        previous_timeout = self.preferences.encounter_timeout
+        self.preferences = updated
+        self.you_overlay.apply_preferences(updated)
+        self.pet_overlay.apply_preferences(updated)
+        if updated.encounter_timeout != previous_timeout:
+            self.dps_meter.inactivity_seconds = updated.encounter_timeout
+        self._capture_geometry()
+        self.settings.save(updated)
+        self.lock_action.setChecked(updated.locked)
+        self.show_pet_action.setChecked(updated.show_pet)
+        self._apply_pet_visibility()
+        self.window.sync_preferences(updated)
+        if updated.log_file and updated.log_file != previous_log:
+            self.open_log(updated.log_file)
+
+    def set_show_pet(self, visible: bool) -> None:
+        self.preferences.show_pet = visible
+        self.show_pet_action.setChecked(visible)
+        self._apply_pet_visibility()
+        self._capture_geometry()
+        self.settings.save(self.preferences)
+        self.window.sync_preferences(self.preferences)
+
+    def set_auto_quit_with_game(self, enabled: bool) -> None:
+        self.preferences.auto_quit_with_game = enabled
+        self.settings.save(self.preferences)
+        self.window.sync_preferences(self.preferences)
+
+    def _apply_pet_visibility(self) -> None:
+        self.pet_overlay.setVisible(self.preferences.show_pet)
+
+    def _save_position(self, actor: Actor, point: QPoint) -> None:
+        if actor == "character":
+            self.preferences.position = point
+            self.settings.save_position(point)
+        else:
+            self.preferences.pet_position = point
+            self.settings.save_pet_position(point)
+
+    def _save_size(self, actor: Actor, size) -> None:  # type: ignore[no-untyped-def]
+        if actor == "character":
+            self.preferences.size = size
+            self.settings.save_size(size)
+        else:
+            self.preferences.pet_size = size
+            self.settings.save_pet_size(size)
+
+    def _capture_geometry(self) -> None:
+        self.preferences.position = self.you_overlay.pos()
+        self.preferences.size = self.you_overlay.size()
+        self.preferences.pet_position = self.pet_overlay.pos()
+        self.preferences.pet_size = self.pet_overlay.size()
+
+    def clear(self) -> None:
+        self.you_overlay.clear_entries()
+        self.pet_overlay.clear_entries()
+        self.dps_meter.reset()
+        self._update_dps_displays()
+        self._set_status(f"Watching {self.log_path.name}" if self.log_path else "Waiting for log…")
+
+    def show_about(self) -> None:
+        QMessageBox.information(
+            self.window,
+            "EQL Combat Feed",
+            "Separate YOU and PET outgoing-damage windows for EverQuest Legends.\n\n"
+            "Move and resize either window independently.\n"
+            "Disable the Pet window in Options for classes without pets.\n"
+            "Use Ctrl+Alt+L to toggle locked click-through mode.",
+        )
+
+    def _handle_line(self, line: str) -> None:
+        if self.parser is None:
+            return
+        changed = False
+        observed_at = monotonic()
+        for event in self.parser.parse_line(line):
+            changed |= self.dps_meter.add(event, observed_at)
+            actor = CombatFeedOverlay._actor_for_event(event)
+            if actor == "character":
+                self.you_overlay.add_event(event)
+            elif actor == "pet":
+                # Hidden Pet windows still retain history but never show themselves.
+                self.pet_overlay.add_event(event)
+        if changed:
+            self._update_dps_displays()
+
+    def _update_dps_displays(self) -> None:
+        self.you_overlay.set_dps(self.dps_meter.snapshot("character"))
+        self.pet_overlay.set_dps(self.dps_meter.snapshot("pet"))
+
+    def _set_status(self, message: str, *, error: bool = False) -> None:
+        self.you_overlay.set_status(message, error=error)
+        self.pet_overlay.set_status(message, error=error)
+        self.window.set_status(message, error=error)
+
+    def _prime_pet_identity(self, path: Path) -> None:
+        if self.parser is None:
+            return
+        try:
+            for line in reversed(read_recent_lines(path)):
+                previous = self.parser.pet_names
+                self.parser.parse_line(line)
+                if self.parser.pet_names != previous:
+                    break
+        except OSError:
+            LOG.exception("Unable to scan recent log for pet identity")
+
+    def _poll_log(self) -> None:
+        if self.watcher is None:
+            return
+        try:
+            self.watcher.poll()
+        except OSError as error:
+            LOG.exception("Log watcher failed")
+            self.poll_timer.stop()
+            self._set_status(f"Log read failed: {error}", error=True)
+            self.tray.showMessage(
+                "EQL Combat Feed",
+                f"Log read failed: {error}",
+                QSystemTrayIcon.MessageIcon.Critical,
+                5000,
+            )
+
+    def _poll_game_process(self) -> None:
+        observed_running = is_game_running()
+        event = self.game_tracker.observe(observed_running)
+        self.window.set_game_running(
+            self.game_tracker.running,
+            seen_running=self.game_tracker.seen_running,
+        )
+        if event is GameProcessEvent.STOPPED:
+            self._handle_game_stopped()
+
+    def _handle_game_stopped(self) -> None:
+        if self._game_exit_prompt_open:
+            return
+        if self.preferences.auto_quit_with_game:
+            self.shutdown()
+            return
+        self._game_exit_prompt_open = True
+        try:
+            answer = QMessageBox.question(
+                self.window,
+                "EverQuest closed",
+                "EverQuest is no longer running. Quit EQL Combat Feed too?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+        finally:
+            self._game_exit_prompt_open = False
+        if answer is QMessageBox.StandardButton.Yes:
+            self.shutdown()
+        else:
+            self.window.show_and_raise()
+
+    def _tick(self) -> None:
+        if self.dps_meter.tick(monotonic()):
+            self._update_dps_displays()
+        self.you_overlay.tick()
+        self.pet_overlay.tick()
+
+    def _build_menu(self) -> QMenu:
+        menu = QMenu()
+        self.lock_action = QAction("Locked / click-through", menu)
+        self.lock_action.setCheckable(True)
+        self.lock_action.triggered.connect(self.set_locked)
+        menu.addAction(self.lock_action)
+
+        self.show_pet_action = QAction("Show Pet window", menu)
+        self.show_pet_action.setCheckable(True)
+        self.show_pet_action.setChecked(self.preferences.show_pet)
+        self.show_pet_action.triggered.connect(self.set_show_pet)
+        menu.addAction(self.show_pet_action)
+
+        menu.addAction("Open control window", self.window.show_and_raise)
+        menu.addAction("Options…", self.show_options)
+        menu.addAction("Choose log…", self.choose_log)
+        menu.addAction("Clear feeds", self.clear)
+        menu.addSeparator()
+        menu.addAction("About", self.show_about)
+        menu.addAction("Quit EQL Combat Feed", self.shutdown)
+        return menu
+
+    def _show_menu(self, point) -> None:  # type: ignore[no-untyped-def]
+        menu = self.tray.contextMenu()
+        if menu:
+            menu.popup(point)
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason is QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.window.show_and_raise()
+
+    def _place_overlays(self) -> None:
+        screen = self.app.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        you_position = self._visible_saved_position(self.preferences.position)
+        if you_position is None:
+            you_position = QPoint(
+                area.right() - self.you_overlay.width() - 30,
+                area.bottom() - self.you_overlay.height() - 130,
+            )
+        self.you_overlay.move(you_position)
+
+        pet_position = self._visible_saved_position(self.preferences.pet_position)
+        if pet_position is None:
+            pet_position = QPoint(
+                max(area.left() + 20, you_position.x() - self.pet_overlay.width() - 24),
+                you_position.y(),
+            )
+        self.pet_overlay.move(pet_position)
+        self._capture_geometry()
+
+    def _visible_saved_position(self, candidate: QPoint | None) -> QPoint | None:
+        if candidate is None:
+            return None
+        visible = any(
+            screen.availableGeometry().adjusted(-80, -80, 80, 80).contains(candidate)
+            for screen in self.app.screens()
+        )
+        return candidate if visible else None
+
+    @staticmethod
+    def _make_icon() -> QIcon:
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor("#17191e"))
+        painter.setPen(QColor("#d7a95f"))
+        painter.drawRoundedRect(3, 3, 58, 58, 12, 12)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "⚔")
+        painter.end()
+        return QIcon(pixmap)

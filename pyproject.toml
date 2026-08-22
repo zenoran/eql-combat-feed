@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "eql-combat-feed"
+version = "0.12.0"
+description = "A high-contrast outgoing-damage and DPS overlay for EverQuest Legends"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "zenoran" }]
+dependencies = [
+  "psutil>=7.2,<8",
+  "PySide6>=6.8,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "ruff>=0.9,<1",
+]
+build = [
+  "Pillow>=12.3,<13",
+  "PyInstaller>=6.22,<7",
+]
+
+[project.scripts]
+eql-combat-feed = "eql_combat_feed.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eql_combat_feed"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
