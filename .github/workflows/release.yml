@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build"
+        required: true
+        default: "v0.12.0"
 
 permissions:
   contents: write
@@ -46,9 +52,9 @@ jobs:
         run: |
           $version = (Get-Content pyproject.toml | Select-String '^version = "(.+)"$').Matches.Groups[1].Value
           $installer = "dist\EQL-Combat-Feed-Setup-$version.exe"
-          $tag = "${{ github.ref_name }}"
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -eq 0) {
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
+          $releaseExists = gh release list --json tagName --jq ".[] | select(.tagName == `"$tag`") | .tagName"
+          if ($releaseExists) {
             gh release upload $tag $installer --clobber
           } else {
             gh release create $tag $installer --generate-notes --title "EQL Combat Feed $version"
