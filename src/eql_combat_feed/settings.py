@@ -10,7 +10,8 @@ from PySide6.QtCore import QPoint, QSettings, QSize
 class OverlayPreferences:
     max_rows: int = 5
     history_rows: int = 100
-    font_scale: float = 1.3
+    damage_font_size: float = 16.0
+    header_font_size: float = 16.0
     encounter_timeout: int = 10
     show_pet: bool = True
     auto_quit_with_game: bool = False
@@ -29,16 +30,23 @@ class SettingsStore:
     def __init__(self, settings: QSettings | None = None) -> None:
         self._settings = settings or QSettings("zenoran", "EQL Combat Feed")
 
+    @classmethod
+    def for_profile(cls, *, dev_mode: bool = False) -> "SettingsStore":
+        application = "EQL Combat Feed DEV" if dev_mode else "EQL Combat Feed"
+        return cls(QSettings("zenoran", application))
+
     def load(self) -> OverlayPreferences:
         position = self._settings.value("window/position")
         size = self._settings.value("window/size")
         pet_position = self._settings.value("pet_window/position")
         pet_size = self._settings.value("pet_window/size")
         log_file = self._settings.value("log/file", "", str)
+        damage_font_size, header_font_size = self._font_sizes()
         preferences = OverlayPreferences(
             max_rows=self._bounded_int("display/max_rows", 5, 3, 8),
             history_rows=self._bounded_int("display/history_rows", 100, 10, 1000),
-            font_scale=self._bounded_float("display/font_scale", 1.3, 0.6, 2.0),
+            damage_font_size=damage_font_size,
+            header_font_size=header_font_size,
             encounter_timeout=self._bounded_int("display/encounter_timeout", 10, 3, 60),
             show_pet=self._settings.value("display/show_pet", True, bool),
             auto_quit_with_game=self._settings.value("app/auto_quit_with_game", False, bool),
@@ -126,6 +134,25 @@ class SettingsStore:
         self._settings.setValue("pet_window/size", preferences.pet_size)
         self._settings.setValue("window/split_geometry_migrated", True)
         self._settings.sync()
+
+    def _font_sizes(self) -> tuple[float, float]:
+        damage = self._settings.value("display/damage_font_size")
+        header = self._settings.value("display/header_font_size")
+        if damage is not None and header is not None:
+            return (
+                self._bounded_float("display/damage_font_size", 16.0, 13.0, 42.0),
+                self._bounded_float("display/header_font_size", 16.0, 10.0, 36.0),
+            )
+
+        # Migrate the former percentage controls without a visual jump.
+        old_damage_scale = self._bounded_float("display/font_scale", 1.3, 0.6, 2.0)
+        old_header_scale = self._bounded_float("display/header_scale", 1.1, 0.5, 1.25)
+        damage_size = 21.0 * old_damage_scale
+        header_size = 16.8 * old_header_scale * old_damage_scale
+        self._settings.setValue("display/damage_font_size", damage_size)
+        self._settings.setValue("display/header_font_size", header_size)
+        self._settings.sync()
+        return damage_size, header_size
 
     def _bounded_int(self, key: str, default: int, minimum: int, maximum: int) -> int:
         value = self._settings.value(key, default, int)

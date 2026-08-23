@@ -8,6 +8,7 @@ from PySide6.QtGui import (
     QColor,
     QFont,
     QFontMetricsF,
+    QLinearGradient,
     QMouseEvent,
     QPainter,
     QPainterPath,
@@ -34,6 +35,8 @@ PET_HEADER = QColor("#00ffff")
 CHARACTER_AMOUNT = QColor("#ffff00")
 PET_AMOUNT = QColor("#00ffff")
 DPS_COLOR = QColor("#7dff00")
+HEADER_BACKDROP_COLOR = QColor(4, 7, 10, 210)
+HEADER_DPS_BACKDROP_COLOR = QColor(0, 0, 0, 175)
 BACKDROP_COLOR = QColor(0, 0, 0, 190)
 HIT_SURFACE_COLOR = QColor(0, 0, 0, 1)
 SOURCE_COLORS = {
@@ -64,20 +67,25 @@ class CombatFeedOverlay(QWidget):
     quit_requested = Signal()
 
     BASE_WIDTH = 600
-    ROW_HEIGHT = 34
+    ROW_HEIGHT = 31
     PADDING = 8
     TITLE_HEIGHT = 27
     HEADER_HEIGHT = 23
+    HEADER_FEED_GAP = 1
     ICON_WIDTH = 34.0
     ICON_AMOUNT_GAP = 8.0
-    DESCRIPTION_ICON_GAP = 6.0
+    DESCRIPTION_ICON_GAP = 10.0
     RESIZE_MARGIN = 18
     MIN_WIDTH = 240
     # Worst plausible damage / DPS strings — the amount lane is sized to fit
     # these and never grows, so extra window width all goes to descriptions.
     AMOUNT_TEMPLATE = "888,888"
-    DPS_TEMPLATE = "888.8K DPS"
+    DPS_TEMPLATE = "99,999 DPS"
     MIN_DESCRIPTION_WIDTH = 24.0
+    MISS_SCALE = 0.75
+    HEADER_FONT_BASE = 16.8
+    HEADER_ACTOR_GAP = 12.0
+    HEADER_DPS_GAP = 8.0
 
     def __init__(self, preferences: OverlayPreferences, actor: Actor = "character") -> None:
         super().__init__()
@@ -116,7 +124,11 @@ class CombatFeedOverlay(QWidget):
 
     @property
     def text_scale(self) -> float:
-        return self.preferences.font_scale
+        return self.preferences.damage_font_size / 21.0
+
+    @property
+    def header_scale(self) -> float:
+        return self.preferences.header_font_size / self.HEADER_FONT_BASE
 
     @property
     def entries(self) -> tuple[DisplayEntry, ...]:
@@ -332,10 +344,19 @@ class CombatFeedOverlay(QWidget):
         return self.TITLE_HEIGHT * self.text_scale
 
     def _header_height(self) -> float:
-        return self.HEADER_HEIGHT * self.text_scale
+        return self.HEADER_HEIGHT * self.header_scale
 
     def _content_top(self) -> float:
-        return self.PADDING + self._title_height() + self._header_height()
+        actor_rect, marker_rect, dps_rect = self._header_rects()
+        content_bounds = self._header_content_bounds(
+            actor_rect,
+            marker_rect,
+            dps_rect,
+            self._header_font(QFont.Weight.Black),
+            self._header_font(QFont.Weight.Bold),
+        )
+        background = self._header_background_rect(content_bounds)
+        return self._header_divider_y(background) + self.HEADER_FEED_GAP * self.text_scale
 
     def _content_rect(self) -> QRectF:
         return QRectF(
@@ -353,13 +374,12 @@ class CombatFeedOverlay(QWidget):
         return visible[index] if index < len(visible) else None
 
     def _minimum_height(self) -> float:
-        return self.PADDING * 2 + self._title_height() + self._header_height() + self._row_height()
+        return self._content_top() + self.PADDING + self._row_height()
 
     def _default_height(self) -> float:
         return (
-            self.PADDING * 2
-            + self._title_height()
-            + self._header_height()
+            self._content_top()
+            + self.PADDING
             + self.preferences.max_rows * self._row_height()
         )
 
@@ -467,59 +487,157 @@ class CombatFeedOverlay(QWidget):
         return f"{actor} DAMAGE{history}"
 
     def _paint_header(self, painter: QPainter) -> None:
+        actor_rect, marker_rect, dps_rect = self._header_rects()
+        actor = "YOU" if self.actor == "character" else "PET"
+        accent = CHARACTER_HEADER if self.actor == "character" else PET_HEADER
+        actor_font = self._header_font(QFont.Weight.Black)
+        dps_font = self._header_font(QFont.Weight.Bold)
+
+        content_bounds = self._header_content_bounds(
+            actor_rect,
+            marker_rect,
+            dps_rect,
+            actor_font,
+            dps_font,
+        )
+        background_rect = self._header_background_rect(content_bounds)
+        background = self._header_background_gradient(background_rect, content_bounds)
+        background_path = QPainterPath()
+        background_path.addRoundedRect(background_rect, 5, 5)
+        painter.fillPath(background_path, background)
+
+        marker_path = QPainterPath()
+        marker_path.addRoundedRect(marker_rect, marker_rect.width() / 2, marker_rect.width() / 2)
+        painter.fillPath(marker_path, QColor(accent.red(), accent.green(), accent.blue(), 220))
+
+        self._draw_outlined_text(
+            painter,
+            actor_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            actor,
+            accent,
+            actor_font,
+        )
+        if self._dps.duration > 0:
+            self._draw_outlined_text(
+                painter,
+                dps_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self._format_dps(self._dps.dps),
+                DPS_COLOR,
+                dps_font,
+            )
+
+    @staticmethod
+    def _header_divider_y(background_rect: QRectF) -> float:
+        # Visual bottom seam for content layout; no underline is painted.
+        return background_rect.bottom()
+
+    def _header_content_bounds(
+        self,
+        actor_rect: QRectF,
+        marker_rect: QRectF,
+        dps_rect: QRectF,
+        actor_font: QFont,
+        dps_font: QFont,
+    ) -> QRectF:
+        actor = "YOU" if self.actor == "character" else "PET"
+        actor_bounds = self._text_backdrop_rect(
+            actor_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            actor,
+            actor_font,
+        )
+        content = actor_bounds.united(marker_rect)
+        if self._dps.duration > 0:
+            dps_bounds = self._text_backdrop_rect(
+                dps_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self._format_dps(self._dps.dps),
+                dps_font,
+            )
+            content = content.united(dps_bounds)
+        return content.adjusted(-7, -2, 7, 2)
+
+    def _header_background_rect(self, content_bounds: QRectF) -> QRectF:
+        return QRectF(
+            self.PADDING,
+            content_bounds.top(),
+            self.width() - self.PADDING * 2,
+            content_bounds.height(),
+        )
+
+    @staticmethod
+    def _header_background_gradient(
+        background_rect: QRectF, content_bounds: QRectF
+    ) -> QLinearGradient:
+        gradient = QLinearGradient(background_rect.left(), 0, background_rect.right(), 0)
+        width = max(1.0, background_rect.width())
+        content_start = max(
+            0.0, min(1.0, (content_bounds.left() - background_rect.left()) / width)
+        )
+        content_end = max(
+            0.0, min(1.0, (content_bounds.right() - background_rect.left()) / width)
+        )
+        feather = min(0.16, max(0.06, (content_end - content_start) * 0.55))
+        gradient.setColorAt(0.0, QColor(3, 5, 8, 0))
+        gradient.setColorAt(max(0.0, content_start - feather), QColor(3, 5, 8, 35))
+        gradient.setColorAt(content_start, HEADER_BACKDROP_COLOR)
+        gradient.setColorAt(content_end, HEADER_BACKDROP_COLOR)
+        gradient.setColorAt(min(1.0, content_end + feather), QColor(3, 5, 8, 35))
+        gradient.setColorAt(1.0, QColor(3, 5, 8, 0))
+        return gradient
+
+    def _header_font(self, weight: QFont.Weight) -> QFont:
+        font = QFont("Segoe UI")
+        font.setPointSizeF(self.preferences.header_font_size)
+        font.setWeight(weight)
+        return font
+
+    def _header_rects(self) -> tuple[QRectF, QRectF, QRectF]:
         row = QRectF(
             self.PADDING,
             self.PADDING + self._title_height() - 1,
             self.width() - self.PADDING * 2,
             self._header_height(),
         )
-        actor_rect, divider_rect, dps_rect = self._entry_rects(row)
-        text = "YOU" if self.actor == "character" else "PET"
-        color = CHARACTER_HEADER if self.actor == "character" else PET_HEADER
-        self._draw_backed_outlined_text(
-            painter,
-            actor_rect,
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-            text,
-            color,
-            self._font("Segoe UI", 11, QFont.Weight.Black),
-        )
-        self._paint_header_divider(painter, divider_rect)
-        if self._dps.duration > 0:
-            self._draw_backed_outlined_text(
-                painter,
-                dps_rect,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                self._format_dps(self._dps.dps),
-                DPS_COLOR,
-                self._font("Segoe UI", 13, QFont.Weight.Black),
-            )
+        actor = "YOU" if self.actor == "character" else "PET"
+        actor_width = QFontMetricsF(
+            self._header_font(QFont.Weight.Black)
+        ).horizontalAdvance(actor) + 8
+        dps_width = QFontMetricsF(
+            self._header_font(QFont.Weight.Bold)
+        ).horizontalAdvance(self.DPS_TEMPLATE) + 8
+        marker_width = max(2.0, 2.5 * self.header_scale)
+        marker_height = min(row.height() * 0.56, 14 * self.header_scale)
+        actor_gap = max(8.0, self.HEADER_ACTOR_GAP * self.header_scale)
+        dps_gap = max(5.0, self.HEADER_DPS_GAP * self.header_scale)
+        cluster_width = actor_width + actor_gap + marker_width + dps_gap + dps_width
+        outline_safe_right = self.width() - 3
+        cluster_left = max(row.left(), outline_safe_right - cluster_width)
 
-    def _paint_header_divider(self, painter: QPainter, rect: QRectF) -> None:
-        height = min(rect.height() * 0.58, 15 * self.text_scale)
-        width = max(2.0, 2.5 * self.text_scale)
-        divider = QRectF(
-            rect.center().x() - width / 2,
-            rect.center().y() - height / 2,
-            width,
-            height,
+        actor_rect = QRectF(cluster_left, row.top(), actor_width, row.height())
+        marker_left = actor_rect.right() + actor_gap
+        marker_rect = QRectF(
+            marker_left,
+            row.center().y() - marker_height / 2,
+            marker_width,
+            marker_height,
         )
-        path = QPainterPath()
-        path.addRoundedRect(divider, width / 2, width / 2)
-        painter.setPen(QPen(QColor(0, 0, 0, 230), 1.0))
-        painter.setBrush(QColor(72, 78, 88, 210))
-        painter.drawPath(path)
+        dps_rect = QRectF(
+            marker_rect.right() + dps_gap,
+            row.top(),
+            dps_width,
+            row.height(),
+        )
+        return actor_rect, marker_rect, dps_rect
 
     @staticmethod
     def _format_dps(value: float) -> str:
-        rounded = round(value, 1)
-        if rounded >= 1000:
-            text = f"{rounded / 1000:.1f}".rstrip("0").rstrip(".") + "K"
-        elif rounded.is_integer():
-            text = f"{rounded:.0f}"
-        else:
-            text = f"{rounded:.1f}"
-        return f"{text} DPS"
+        rounded = max(0, round(value))
+        if rounded > 99_999:
+            return f"{round(rounded / 1000):,}K DPS"
+        return f"{rounded:,} DPS"
 
     def _paint_feed(self, painter: QPainter) -> None:
         content = self._content_rect()
@@ -555,6 +673,7 @@ class CombatFeedOverlay(QWidget):
                 label_color,
                 description_font,
             )
+        icon_font, amount_font = self._entry_value_fonts(event)
         # Icons intentionally have no backdrop; only the heavy outline separates them.
         self._draw_outlined_text(
             painter,
@@ -562,7 +681,7 @@ class CombatFeedOverlay(QWidget):
             Qt.AlignmentFlag.AlignCenter,
             icon,
             label_color,
-            self._font("Segoe UI Symbol", 17, QFont.Weight.Black),
+            icon_font,
         )
         self._draw_backed_outlined_text(
             painter,
@@ -570,17 +689,19 @@ class CombatFeedOverlay(QWidget):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             amount_text,
             amount_color,
-            self._font("Segoe UI", 21, QFont.Weight.Black),
+            amount_font,
+        )
+
+    def _entry_value_fonts(self, event: CombatEvent) -> tuple[QFont, QFont]:
+        scale = self.MISS_SCALE if event.kind is EventKind.MISS else 1.0
+        return (
+            self._font("Segoe UI Symbol", 17 * scale, QFont.Weight.Black),
+            self._font("Segoe UI", 21 * scale, QFont.Weight.Black),
         )
 
     def _amount_lane_width(self) -> float:
         amount_font = self._font("Segoe UI", 21, QFont.Weight.Black)
-        dps_font = self._font("Segoe UI", 13, QFont.Weight.Black)
-        widest = max(
-            QFontMetricsF(amount_font).horizontalAdvance(self.AMOUNT_TEMPLATE),
-            QFontMetricsF(dps_font).horizontalAdvance(self.DPS_TEMPLATE),
-        )
-        return widest + 8  # backdrop plate breathing room
+        return QFontMetricsF(amount_font).horizontalAdvance(self.AMOUNT_TEMPLATE) + 8
 
     def _entry_rects(self, rect: QRectF) -> tuple[QRectF, QRectF, QRectF]:
         icon_width = self.ICON_WIDTH * self.text_scale

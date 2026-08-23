@@ -8,10 +8,14 @@ from eql_combat_feed import watcher as watcher_module
 from eql_combat_feed.watcher import LogWatcher, discover_log_file, read_recent_lines
 
 
-def test_explicit_log_discovery(tmp_path: Path) -> None:
+def test_explicit_log_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     log = tmp_path / "eqlog_Hero_freeport.txt"
     log.write_text("", encoding="utf-8")
     assert discover_log_file(log) == log
+
+    monkeypatch.setattr(watcher_module, "candidate_log_directories", lambda: ())
     assert discover_log_file(tmp_path / "missing.txt") is None
 
 

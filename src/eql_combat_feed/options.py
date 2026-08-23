@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -28,11 +29,19 @@ class OptionsDialog(QDialog):
         self.setModal(True)
         self.setMinimumWidth(460)
 
-        self.font_scale = QSpinBox()
-        self.font_scale.setRange(60, 200)
-        self.font_scale.setSuffix(" %")
-        self.font_scale.setSingleStep(5)
-        self.font_scale.setValue(round(preferences.font_scale * 100))
+        self.damage_font_size = QDoubleSpinBox()
+        self.damage_font_size.setRange(13.0, 42.0)
+        self.damage_font_size.setDecimals(1)
+        self.damage_font_size.setSuffix(" pt")
+        self.damage_font_size.setSingleStep(1.0)
+        self.damage_font_size.setValue(preferences.damage_font_size)
+
+        self.header_font_size = QDoubleSpinBox()
+        self.header_font_size.setRange(10.0, 36.0)
+        self.header_font_size.setDecimals(1)
+        self.header_font_size.setSuffix(" pt")
+        self.header_font_size.setSingleStep(1.0)
+        self.header_font_size.setValue(preferences.header_font_size)
 
         self.max_rows = QSpinBox()
         self.max_rows.setRange(3, 8)
@@ -78,7 +87,8 @@ class OptionsDialog(QDialog):
 
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        form.addRow("Text size", self.font_scale)
+        form.addRow("Damage text size", self.damage_font_size)
+        form.addRow("Header text size", self.header_font_size)
         form.addRow("Maximum visible rows", self.max_rows)
         form.addRow("History rows per window", self.history_rows)
         form.addRow("End encounter after", self.encounter_timeout)
@@ -91,9 +101,10 @@ class OptionsDialog(QDialog):
         form.addRow("Input mode", self.locked)
 
         hint = QLabel(
-            "YOU and PET are independently movable/resizable windows. Resize either for "
-            "more name room; Text size controls both. Hover a top edge for controls.\n"
-            "Locked: mouse input passes through; Ctrl+Alt+L always unlocks."
+            "YOU and PET are independently movable/resizable windows. Damage and header "
+            "text sizes are independent point sizes. Resize either window for more name room; "
+            "hover a top edge for controls.\nLocked: mouse input passes through; "
+            "Ctrl+Alt+L always unlocks."
         )
         hint.setWordWrap(True)
         hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -116,7 +127,8 @@ class OptionsDialog(QDialog):
         return OverlayPreferences(
             max_rows=self.max_rows.value(),
             history_rows=self.history_rows.value(),
-            font_scale=self.font_scale.value() / 100.0,
+            damage_font_size=self.damage_font_size.value(),
+            header_font_size=self.header_font_size.value(),
             encounter_timeout=self.encounter_timeout.value(),
             show_pet=self.show_pet.isChecked(),
             auto_quit_with_game=self.auto_quit_with_game.isChecked(),
@@ -145,7 +157,8 @@ class OptionsDialog(QDialog):
 
     def _reset_defaults(self) -> None:
         defaults = OverlayPreferences()
-        self.font_scale.setValue(round(defaults.font_scale * 100))
+        self.damage_font_size.setValue(defaults.damage_font_size)
+        self.header_font_size.setValue(defaults.header_font_size)
         self.max_rows.setValue(defaults.max_rows)
         self.history_rows.setValue(defaults.history_rows)
         self.encounter_timeout.setValue(defaults.encounter_timeout)

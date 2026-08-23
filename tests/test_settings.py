@@ -17,7 +17,8 @@ def test_settings_round_trip_split_window_configuration(tmp_path: Path) -> None:
     preferences = OverlayPreferences(
         max_rows=8,
         history_rows=250,
-        font_scale=1.55,
+        damage_font_size=32.5,
+        header_font_size=23.0,
         encounter_timeout=14,
         show_pet=False,
         auto_quit_with_game=True,
@@ -38,6 +39,30 @@ def test_settings_round_trip_split_window_configuration(tmp_path: Path) -> None:
     loaded = SettingsStore(QSettings(str(settings_file), QSettings.Format.IniFormat)).load()
 
     assert loaded == preferences
+
+
+def test_old_percentages_migrate_to_equivalent_independent_point_sizes(
+    tmp_path: Path,
+) -> None:
+    settings = QSettings(str(tmp_path / "migration-fonts.ini"), QSettings.Format.IniFormat)
+    settings.setValue("display/font_scale", 1.3)
+    settings.setValue("display/header_scale", 1.25)
+    settings.sync()
+
+    loaded = SettingsStore(settings).load()
+
+    assert loaded.damage_font_size == pytest.approx(27.3)
+    assert loaded.header_font_size == pytest.approx(27.3)
+    assert settings.value("display/damage_font_size", type=float) == pytest.approx(27.3)
+    assert settings.value("display/header_font_size", type=float) == pytest.approx(27.3)
+
+
+def test_named_profiles_keep_stable_and_dev_settings_separate() -> None:
+    stable = SettingsStore.for_profile()
+    dev = SettingsStore.for_profile(dev_mode=True)
+
+    assert stable._settings.applicationName() == "EQL Combat Feed"
+    assert dev._settings.applicationName() == "EQL Combat Feed DEV"
 
 
 def test_combined_geometry_migrates_to_two_half_width_windows_once(tmp_path: Path) -> None:

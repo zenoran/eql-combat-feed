@@ -36,9 +36,13 @@ class CombatFeedController(QObject):
         app: QApplication,
         requested_log: str | None = None,
         settings: SettingsStore | None = None,
+        *,
+        dev_mode: bool = False,
     ) -> None:
         super().__init__()
         self.app = app
+        self.dev_mode = dev_mode
+        self.app_name = "EQL Combat Feed DEV" if dev_mode else "EQL Combat Feed"
         self.app.setQuitOnLastWindowClosed(False)
         self.settings = settings or SettingsStore()
         self.preferences = self.settings.load()
@@ -58,7 +62,7 @@ class CombatFeedController(QObject):
 
         self.app_icon = self._make_icon()
         self.app.setWindowIcon(self.app_icon)
-        self.window = ControlWindow(self.preferences, self.app_icon)
+        self.window = ControlWindow(self.preferences, self.app_icon, dev_mode=dev_mode)
         self.window.quit_requested.connect(self.shutdown)
         self.window.lock_changed.connect(self.set_locked)
         self.window.pet_visibility_changed.connect(self.set_show_pet)
@@ -68,7 +72,7 @@ class CombatFeedController(QObject):
         self.window.clear_requested.connect(self.clear)
 
         self.tray = QSystemTrayIcon(self.app_icon, self.app)
-        self.tray.setToolTip("EQL Combat Feed")
+        self.tray.setToolTip(self.app_name)
         self.tray.setContextMenu(self._build_menu())
         self.tray.activated.connect(self._on_tray_activated)
 
@@ -107,7 +111,7 @@ class CombatFeedController(QObject):
     def _finish_startup(self) -> None:
         self._poll_game_process()
         self.open_log(self._requested_log)
-        if self.preferences.check_updates:
+        if self.preferences.check_updates and not self.dev_mode:
             QTimer.singleShot(3000, self.update_checker.check)
 
     def _connect_overlay(self, overlay: CombatFeedOverlay, actor: Actor) -> None:
@@ -162,7 +166,7 @@ class CombatFeedController(QObject):
         self.preferences.log_file = path
         self.settings.save_log_file(path)
         self._set_status(f"Watching {path.name}")
-        self.tray.setToolTip(f"EQL Combat Feed\n{path.name}")
+        self.tray.setToolTip(f"{self.app_name}\n{path.name}")
         self._poll_failures = 0
         self.poll_timer.start()
         LOG.info("Watching %s", path)
@@ -191,7 +195,7 @@ class CombatFeedController(QObject):
         if notify:
             mode = "Locked — Ctrl+Alt+L to unlock" if locked else "Move mode — drag either window"
             self.tray.showMessage(
-                "EQL Combat Feed", mode, QSystemTrayIcon.MessageIcon.Information, 1200
+                self.app_name, mode, QSystemTrayIcon.MessageIcon.Information, 1200
             )
 
     def show_options(self) -> None:
@@ -260,7 +264,7 @@ class CombatFeedController(QObject):
     def _on_update_available(self, version: str, url: str) -> None:
         self.window.show_update_available(version, url)
         self.tray.showMessage(
-            "EQL Combat Feed",
+            self.app_name,
             f"Update v{version} is available — open the control window to download.",
             QSystemTrayIcon.MessageIcon.Information,
             6000,
@@ -298,7 +302,7 @@ class CombatFeedController(QObject):
     def show_about(self) -> None:
         QMessageBox.information(
             self.window,
-            "EQL Combat Feed",
+            self.app_name,
             "Separate YOU and PET outgoing-damage windows for EverQuest Legends.\n\n"
             "Move and resize either window independently.\n"
             "Disable the Pet window in Options for classes without pets.\n"
@@ -439,7 +443,7 @@ class CombatFeedController(QObject):
         menu.addAction("Clear feeds", self.clear)
         menu.addSeparator()
         menu.addAction("About", self.show_about)
-        menu.addAction("Quit EQL Combat Feed", self.shutdown)
+        menu.addAction(f"Quit {self.app_name}", self.shutdown)
         return menu
 
     def _show_menu(self, point) -> None:  # type: ignore[no-untyped-def]

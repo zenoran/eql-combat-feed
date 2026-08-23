@@ -37,6 +37,20 @@ def test_control_window_is_normal_taskbar_window_and_close_requests_quit() -> No
     app.processEvents()
 
 
+def test_dev_window_is_unmistakably_labeled() -> None:
+    app = QApplication.instance() or QApplication([])
+    window = ControlWindow(OverlayPreferences(), QIcon(), dev_mode=True)
+
+    assert window.windowTitle().startswith("EQL Combat Feed DEV")
+    assert window.centralWidget().findChildren(qt_widgets.QLabel)[1].text() == (
+        "Development build — changes stay local."
+    )
+
+    window.allow_close()
+    window.close()
+    app.processEvents()
+
+
 def test_close_minimizes_to_tray_when_enabled() -> None:
     app = QApplication.instance() or QApplication([])
     window = ControlWindow(OverlayPreferences(minimize_to_tray=True), QIcon())

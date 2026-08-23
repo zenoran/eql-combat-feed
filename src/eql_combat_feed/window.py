@@ -29,19 +29,31 @@ class ControlWindow(QMainWindow):
     choose_log_requested = Signal()
     clear_requested = Signal()
 
-    def __init__(self, preferences: OverlayPreferences, icon: QIcon) -> None:
+    def __init__(
+        self,
+        preferences: OverlayPreferences,
+        icon: QIcon,
+        *,
+        dev_mode: bool = False,
+    ) -> None:
         super().__init__()
         self._allow_close = False
         self._minimize_to_tray = preferences.minimize_to_tray
-        self.setWindowTitle(f"EQL Combat Feed {__version__}")
+        name = "EQL Combat Feed DEV" if dev_mode else "EQL Combat Feed"
+        self.setWindowTitle(f"{name} {__version__}")
         self.setWindowIcon(icon)
         self.setMinimumSize(500, 310)
         self.resize(560, 340)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
 
-        heading = QLabel("EQL Combat Feed")
+        heading = QLabel(name)
         heading.setStyleSheet("font-size: 20px; font-weight: 700;")
-        subtitle = QLabel("Damage and DPS. That's it.")
+        subtitle_text = (
+            "Development build — changes stay local."
+            if dev_mode
+            else "Damage and DPS. That's it."
+        )
+        subtitle = QLabel(subtitle_text)
         subtitle.setStyleSheet("color: #707780;")
         self.update_label = QLabel()
         self.update_label.setOpenExternalLinks(True)

@@ -24,7 +24,8 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
         pet_size=QSize(500, 400),
     )
     dialog = OptionsDialog(current)
-    dialog.font_scale.setValue(145)
+    dialog.damage_font_size.setValue(30.5)
+    dialog.header_font_size.setValue(22.0)
     dialog.max_rows.setValue(7)
     dialog.history_rows.setValue(250)
     dialog.encounter_timeout.setValue(14)
@@ -37,7 +38,8 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
 
     result = dialog.result_preferences(current)
 
-    assert result.font_scale == 1.45
+    assert result.damage_font_size == 30.5
+    assert result.header_font_size == 22.0
     assert result.max_rows == 7
     assert result.history_rows == 250
     assert result.encounter_timeout == 14

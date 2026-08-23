@@ -143,11 +143,11 @@ def test_single_window_history_cap_offset_and_new_activity_hold() -> None:
 
 def test_row_pitch_is_dense_and_scales_with_text() -> None:
     app = QApplication.instance() or QApplication([])
-    overlay = CombatFeedOverlay(OverlayPreferences(font_scale=1.3), "character")
+    overlay = CombatFeedOverlay(OverlayPreferences(damage_font_size=27.3), "character")
 
-    assert overlay.ROW_HEIGHT == 34
-    assert overlay._row_height() == pytest.approx(44.2)
-    assert overlay._row_height() < 45
+    assert overlay.ROW_HEIGHT == 31
+    assert overlay._row_height() == pytest.approx(40.3)
+    assert overlay._row_height() < 41
 
     overlay.close()
     app.processEvents()
@@ -155,7 +155,7 @@ def test_row_pitch_is_dense_and_scales_with_text() -> None:
 
 def test_icon_has_no_backdrop_while_text_backdrop_has_two_vertical_pixels() -> None:
     app = QApplication.instance() or QApplication([])
-    overlay = CombatFeedOverlay(OverlayPreferences(font_scale=1.3), "character")
+    overlay = CombatFeedOverlay(OverlayPreferences(damage_font_size=27.3), "character")
     spell = event(123, EventKind.SPELL, ability="Lifedraw")
     overlay.add_event(spell)
 
@@ -191,44 +191,160 @@ def test_icon_has_no_backdrop_while_text_backdrop_has_two_vertical_pixels() -> N
     app.processEvents()
 
 
-def test_header_uses_the_same_three_lanes_as_damage_rows() -> None:
+def test_header_cluster_is_spaced_and_right_anchored() -> None:
     app = QApplication.instance() or QApplication([])
     for actor in ("character", "pet"):
         overlay = CombatFeedOverlay(OverlayPreferences(size=QSize(772, 400)), actor)
         overlay.set_dps(DpsSnapshot(damage=1234, duration=10.0, active=True))
-        header_row = QRectF(
-            overlay.PADDING,
-            overlay.PADDING + overlay._title_height() - 1,
-            overlay.width() - overlay.PADDING * 2,
-            overlay._header_height(),
+        actor_rect, marker_rect, dps_rect = overlay._header_rects()
+        dps_text = overlay._format_dps(overlay._dps.dps)
+        dps_advance = QFontMetricsF(overlay._header_font(QFont.Weight.Bold)).horizontalAdvance(
+            dps_text
         )
-        actor_rect, divider_rect, dps_rect = overlay._entry_rects(header_row)
-        _, icon_rect, damage_rect = overlay._entry_rects(row_rect(overlay))
 
-        assert actor_rect.right() == pytest.approx(icon_rect.left() - 6 * overlay.text_scale)
-        assert divider_rect.center().x() == pytest.approx(icon_rect.center().x())
-        assert dps_rect.left() == pytest.approx(damage_rect.left())
+        assert marker_rect.left() - actor_rect.right() >= 8
+        assert dps_rect.left() - marker_rect.right() >= 5
+        assert dps_rect.width() >= dps_advance + 6
+        assert dps_rect.right() == pytest.approx(overlay.width() - 3)
+        assert actor_rect.left() >= overlay.PADDING
         assert overlay._title_text().startswith("YOU" if actor == "character" else "PET")
 
         image = render(overlay)
-        divider_pixel = image.pixelColor(
-            round(divider_rect.center().x()), round(divider_rect.center().y())
+        marker_pixel = image.pixelColor(
+            round(marker_rect.center().x()), round(marker_rect.center().y())
         )
-        assert divider_pixel.alpha() > 150
-        assert max(divider_pixel.red(), divider_pixel.green(), divider_pixel.blue()) < 130
+        assert marker_pixel.alpha() > 180
         overlay.close()
     app.processEvents()
 
 
-def test_dps_badge_is_distinct_and_formats_compactly() -> None:
+def test_header_and_damage_point_sizes_are_independent() -> None:
+    app = QApplication.instance() or QApplication([])
+    base = CombatFeedOverlay(
+        OverlayPreferences(
+            damage_font_size=27.3,
+            header_font_size=22.0,
+            size=QSize(772, 400),
+        ),
+        "character",
+    )
+    bigger_header = CombatFeedOverlay(
+        OverlayPreferences(
+            damage_font_size=27.3,
+            header_font_size=30.0,
+            size=QSize(772, 400),
+        ),
+        "character",
+    )
+    bigger_damage = CombatFeedOverlay(
+        OverlayPreferences(
+            damage_font_size=35.0,
+            header_font_size=22.0,
+            size=QSize(772, 400),
+        ),
+        "character",
+    )
+
+    assert base._header_font(QFont.Weight.Bold).pointSizeF() == pytest.approx(22.0)
+    assert bigger_header._header_font(QFont.Weight.Bold).pointSizeF() == pytest.approx(30.0)
+    assert bigger_header._row_height() == pytest.approx(base._row_height())
+    assert bigger_damage._header_font(QFont.Weight.Bold).pointSizeF() == pytest.approx(22.0)
+    assert bigger_damage._row_height() > base._row_height()
+
+    base.close()
+    bigger_header.close()
+    bigger_damage.close()
+    app.processEvents()
+
+
+def test_header_band_anchors_feed_without_an_underline() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(
+        OverlayPreferences(damage_font_size=27.3, header_font_size=22.0, size=QSize(900, 400)),
+        "character",
+    )
+    overlay.set_dps(DpsSnapshot(damage=2461, duration=10.0, active=True))
+    actor_rect, marker_rect, dps_rect = overlay._header_rects()
+    content = overlay._header_content_bounds(
+        actor_rect,
+        marker_rect,
+        dps_rect,
+        overlay._header_font(QFont.Weight.Black),
+        overlay._header_font(QFont.Weight.Bold),
+    )
+    background = overlay._header_background_rect(content)
+
+    assert background.width() == pytest.approx(overlay.width() - overlay.PADDING * 2)
+    assert overlay._header_divider_y(background) == pytest.approx(background.bottom())
+    assert overlay.HEADER_FEED_GAP <= 2
+    assert overlay._content_top() == pytest.approx(
+        background.bottom() + overlay.HEADER_FEED_GAP * overlay.text_scale
+    )
+
+    overlay.close()
+    app.processEvents()
+
+
+def test_header_content_stays_aligned_while_background_follows_window_width() -> None:
+    app = QApplication.instance() or QApplication([])
+    content_widths = []
+    background_widths = []
+    for width in (600, 1100):
+        overlay = CombatFeedOverlay(
+            OverlayPreferences(
+                damage_font_size=27.3,
+                header_font_size=22.0,
+                size=QSize(width, 400),
+            ),
+            "character",
+        )
+        overlay.set_dps(DpsSnapshot(damage=2461, duration=10.0, active=True))
+        actor_rect, marker_rect, dps_rect = overlay._header_rects()
+        content = overlay._header_content_bounds(
+            actor_rect,
+            marker_rect,
+            dps_rect,
+            overlay._header_font(QFont.Weight.Black),
+            overlay._header_font(QFont.Weight.Bold),
+        )
+        background = overlay._header_background_rect(content)
+        content_widths.append(content.width())
+        background_widths.append(background.width())
+        overlay.close()
+
+    assert content_widths[0] == pytest.approx(content_widths[1])
+    assert background_widths == pytest.approx([584, 1084])
+    app.processEvents()
+
+
+def test_dps_header_uses_whole_grouped_values() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = CombatFeedOverlay(OverlayPreferences(size=QSize(772, 400)), "character")
-    overlay.set_dps(DpsSnapshot(damage=1234, duration=10.0, active=True))
 
     assert QColor("#7dff00") == overlay_module.DPS_COLOR
-    assert overlay._format_dps(123.4) == "123.4 DPS"
-    assert overlay._format_dps(1200) == "1.2K DPS"
-    assert overlay._format_dps(12) == "12 DPS"
+    assert overlay.DPS_TEMPLATE == "99,999 DPS"
+    assert overlay._format_dps(123.4) == "123 DPS"
+    assert overlay._format_dps(123.6) == "124 DPS"
+    assert overlay._format_dps(1200) == "1,200 DPS"
+    assert overlay._format_dps(99_999) == "99,999 DPS"
+    assert overlay._format_dps(100_000) == "100K DPS"
+
+    overlay.close()
+    app.processEvents()
+
+
+def test_dps_slot_stays_fixed_from_zero_through_realistic_maximum() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(size=QSize(772, 400)), "character")
+    geometries = []
+    for dps in (0, 216, 9_999, 99_999):
+        overlay.set_dps(DpsSnapshot(damage=dps, duration=1.0, active=True))
+        actor_rect, marker_rect, dps_rect = overlay._header_rects()
+        geometries.append(
+            (actor_rect.left(), marker_rect.left(), dps_rect.left(), dps_rect.width())
+        )
+
+    assert all(geometry == pytest.approx(geometries[0]) for geometry in geometries[1:])
 
     overlay.close()
     app.processEvents()
@@ -240,13 +356,7 @@ def test_pet_header_shows_zero_dps_during_shared_active_encounter() -> None:
     overlay.set_dps(DpsSnapshot(damage=0, duration=4.0, active=True))
 
     image = render(overlay)
-    header_row = QRectF(
-        overlay.PADDING,
-        overlay.PADDING + overlay._title_height() - 1,
-        overlay.width() - overlay.PADDING * 2,
-        overlay._header_height(),
-    )
-    _, _, dps_rect = overlay._entry_rects(header_row)
+    _, _, dps_rect = overlay._header_rects()
     green_pixels = 0
     for x in range(round(dps_rect.left()), round(dps_rect.right()) + 1):
         for y in range(round(dps_rect.top()), round(dps_rect.bottom()) + 1):
@@ -261,10 +371,23 @@ def test_pet_header_shows_zero_dps_during_shared_active_encounter() -> None:
     app.processEvents()
 
 
+def test_description_lane_keeps_names_clear_of_the_icon_spine() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(damage_font_size=27.3), "character")
+    description_rect, icon_rect, _ = overlay._entry_rects(row_rect(overlay))
+
+    assert icon_rect.left() - description_rect.right() == pytest.approx(
+        overlay.DESCRIPTION_ICON_GAP * overlay.text_scale
+    )
+
+    overlay.close()
+    app.processEvents()
+
+
 def test_window_width_and_font_size_remain_independent() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = CombatFeedOverlay(
-        OverlayPreferences(size=QSize(600, 420), font_scale=1.3), "character"
+        OverlayPreferences(size=QSize(600, 420), damage_font_size=27.3), "character"
     )
     narrow_description, narrow_icon, _ = overlay._entry_rects(row_rect(overlay))
     narrow_font = overlay._font("Segoe UI", 12, QFont.Weight.Black)
@@ -297,13 +420,30 @@ def test_extra_width_grows_descriptions_not_the_amount_lane() -> None:
     # The lane hugs the right edge instead of starting at the window's center.
     assert wide_amount.right() == pytest.approx(row_rect(overlay).right())
     assert wide_icon.center().x() > overlay.width() / 2
-    # And it fits the worst-case templates at the current scale.
+    # And it fits the worst-case damage template at the current scale.
     amount_font = overlay._font("Segoe UI", 21, QFont.Weight.Black)
-    dps_font = overlay._font("Segoe UI", 13, QFont.Weight.Black)
-    assert wide_amount.width() >= QFontMetricsF(amount_font).horizontalAdvance("888,888")
-    assert wide_amount.width() >= QFontMetricsF(dps_font).horizontalAdvance("888.8K DPS")
+    assert wide_amount.width() >= QFontMetricsF(amount_font).horizontalAdvance("888,888") + 6
 
     overlay.close()
+    app.processEvents()
+
+
+def test_header_size_does_not_widen_combat_amount_lane() -> None:
+    app = QApplication.instance() or QApplication([])
+    small = CombatFeedOverlay(
+        OverlayPreferences(header_font_size=14.0, size=QSize(700, 420)), "character"
+    )
+    large = CombatFeedOverlay(
+        OverlayPreferences(header_font_size=34.0, size=QSize(700, 420)), "character"
+    )
+
+    _, _, small_amount = small._entry_rects(row_rect(small))
+    _, _, large_amount = large._entry_rects(row_rect(large))
+    assert large_amount.width() == pytest.approx(small_amount.width())
+    assert large_amount.left() == pytest.approx(small_amount.left())
+
+    small.close()
+    large.close()
     app.processEvents()
 
 
@@ -342,6 +482,23 @@ def test_pet_window_restores_pet_size_not_you_size() -> None:
 
     you.close()
     pet.close()
+    app.processEvents()
+
+
+def test_miss_text_and_icon_are_smaller_without_changing_hit_sizes() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(damage_font_size=27.3), "character")
+    miss = event(0, EventKind.MISS)
+    hit = event(123, EventKind.MELEE)
+
+    miss_icon, miss_amount = overlay._entry_value_fonts(miss)
+    hit_icon, hit_amount = overlay._entry_value_fonts(hit)
+
+    assert overlay.MISS_SCALE == 0.75
+    assert miss_icon.pointSizeF() == pytest.approx(hit_icon.pointSizeF() * 0.75)
+    assert miss_amount.pointSizeF() == pytest.approx(hit_amount.pointSizeF() * 0.75)
+
+    overlay.close()
     app.processEvents()
 
 
