@@ -277,12 +277,13 @@ class CombatFeedOverlay(QWidget):
 
     def event(self, event) -> bool:  # type: ignore[no-untyped-def]
         if event.type() == QEvent.Type.ToolTip and not self._locked:
-            point = event.position()
+            # QHelpEvent is pre-Qt6 API: pos()/globalPos(), not position().
+            point = QPointF(event.pos())
             if self._controls_visible and self._options_rect().contains(point):
-                QToolTip.showText(event.globalPosition().toPoint(), "Options", self)
+                QToolTip.showText(event.globalPos(), "Options", self)
                 return True
             if self._controls_visible and self._quit_rect().contains(point):
-                QToolTip.showText(event.globalPosition().toPoint(), "Quit EQL Combat Feed", self)
+                QToolTip.showText(event.globalPos(), "Quit EQL Combat Feed", self)
                 return True
             entry = self._entry_at(point)
             if entry is not None:
@@ -293,7 +294,7 @@ class CombatFeedOverlay(QWidget):
                     f"{source} · {self._source_label(entry.event)} · "
                     f"{entry.event.amount:,} → {target}{critical}"
                 )
-                QToolTip.showText(event.globalPosition().toPoint(), text, self)
+                QToolTip.showText(event.globalPos(), text, self)
                 return True
         return super().event(event)
 
