@@ -108,21 +108,40 @@ def test_charm_lands_and_pet_is_credited_without_pet_attack_order() -> None:
     assert (event.kind, event.amount) == (EventKind.PET, 115)
 
 
-def test_charm_break_is_detected_when_pet_turns_on_you() -> None:
+def test_same_named_hostile_does_not_erase_charmed_pet_identity() -> None:
+    """Live trace: one lava crawler is charmed while identical crawlers hit YOU."""
     parser = EqlCombatParser("Zenoran")
-    parser.parse_line(TS + "an elemental crusader has been charmed.")
-    swing = TS + "An elemental crusader slashes an elemental wizard for 115 points of damage."
+    parser.parse_line(TS + "a lava duct crawler has been charmed.")
+    swing = TS + "A lava duct crawler slashes a lava duct crawler for 120 points of damage."
     assert parser.parse_line(swing)[0].kind is EventKind.PET
 
-    # Charm breaks: the "pet" swings at YOU — via a hit or a miss.
-    hit_you = parser.parse_line(TS + "An elemental crusader cleaves YOU for 18 points of damage.")
+    hit_you = parser.parse_line(TS + "A lava duct crawler bites YOU for 103 points of damage.")
+    miss_you = parser.parse_line(TS + "A lava duct crawler tries to bite YOU, but misses!")
     assert hit_you[0].incoming
-    assert parser.parse_line(swing) == []  # no longer credited as pet
-
-    parser.parse_line(TS + "an elemental crusader has been charmed.")
-    assert parser.parse_line(swing)[0].kind is EventKind.PET
-    miss_you = parser.parse_line(TS + "An elemental crusader tries to hit YOU, but misses!")
     assert miss_you[0].incoming
+    assert parser.parse_line(swing)[0].kind is EventKind.PET
+
+
+def test_recognized_charm_expiry_clears_pet_identity() -> None:
+    parser = EqlCombatParser("Zenoran")
+    parser.parse_line(TS + "a lava duct crawler has been charmed.")
+    swing = TS + "A lava duct crawler slashes a lava duct crawler for 120 points of damage."
+    assert parser.parse_line(swing)[0].kind is EventKind.PET
+
+    parser.parse_line(
+        TS + "Your Cajoling Whispers spell has worn off of a lava duct crawler."
+    )
+    assert parser.parse_line(swing) == []
+
+
+def test_non_charmed_pet_turning_on_you_clears_identity() -> None:
+    parser = EqlCombatParser("Zenoran")
+    parser.parse_line(TS + "A dread skeleton told you, 'Attacking a goblin Master.'")
+    swing = TS + "A dread skeleton slashes a goblin for 115 points of damage."
+    assert parser.parse_line(swing)[0].kind is EventKind.PET
+
+    incoming = parser.parse_line(TS + "A dread skeleton cleaves YOU for 18 points of damage.")
+    assert incoming[0].incoming
     assert parser.parse_line(swing) == []
 
 

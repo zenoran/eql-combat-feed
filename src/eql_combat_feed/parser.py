@@ -134,6 +134,22 @@ PET_ATTACK_RE = re.compile(r"^(?P<pet>.+?) told you, 'Attacking (?P<target>.+?) 
 # lands, so a charm pet is attributed immediately instead of staying invisible
 # until it says "Attacking X Master." (which requires an explicit /pet attack).
 PET_CHARMED_RE = re.compile(r"^(?P<pet>.+?) has been charmed\.$", re.I)
+SPELL_WORN_OFF_RE = re.compile(
+    r"^Your (?P<spell>.+?) spell has worn off of (?P<target>.+?)\.$", re.I
+)
+CHARM_SPELLS = {
+    "allure",
+    "allure of the wild",
+    "beguiling",
+    "beguile",
+    "beguile animals",
+    "boltran's agacerie",
+    "cajoling whispers",
+    "call of karana",
+    "charm",
+    "dictate",
+    "solon's song of the sirens",
+}
 SELF_KILL_RE = re.compile(r"^You have slain (?P<target>.+?)!?$", re.I)
 PET_KILL_RE = re.compile(r"^(?P<target>.+?) has been slain by (?P<source>.+?)!?$", re.I)
 
@@ -168,6 +184,7 @@ class EqlCombatParser:
     def __init__(self, character_name: str | None = None) -> None:
         self.character_name = character_name
         self._pets: dict[str, str] = {}
+        self._charmed_pets: set[str] = set()
 
     @property
     def pet_names(self) -> frozenset[str]:
@@ -199,7 +216,11 @@ class EqlCombatParser:
             self._remember_pet(match.group("pet"))
             return []
         if match := PET_CHARMED_RE.match(body):
-            self._remember_pet(match.group("pet"))
+            self._remember_pet(match.group("pet"), charmed=True)
+            return []
+        if match := SPELL_WORN_OFF_RE.match(body):
+            if match.group("spell").strip().casefold() in CHARM_SPELLS:
+                self._forget_pet(match.group("target"))
             return []
 
         if match := SELF_HIT_RE.match(body):
@@ -320,10 +341,13 @@ class EqlCombatParser:
             ability = self._physical_ability(verb) if verb else "Melee"
             return [self._status_event(timestamp, EventKind.MISS, ability, target)]
         if match := INCOMING_MISS_RE.match(body):
-            # A "pet" swinging at YOU means the charm broke — it isn't ours
-            # anymore. (The generic "spell has worn off of X" line can't signal
-            # this: a haste buff fading off a still-charmed pet looks the same.)
-            if self._is_pet(match.group("source")):
+            # Summoned pets cannot share a name with hostile NPCs, so one
+            # attacking us is strong evidence ownership ended. Charmed NPCs
+            # routinely *do* share names; only the charm-expiry line may clear
+            # those or an unrelated same-named mob will erase pet attribution.
+            if self._is_pet(match.group("source")) and not self._is_charmed_pet(
+                match.group("source")
+            ):
                 self._forget_pet(match.group("source"))
             return [
                 self._status_event(
@@ -371,7 +395,7 @@ class EqlCombatParser:
             source = match.group("source")
             target = match.group("target")
             if target.casefold() in {"you", "yourself"}:
-                if self._is_pet(source):
+                if self._is_pet(source) and not self._is_charmed_pet(source):
                     self._forget_pet(source)
                 return [self._incoming_hit(timestamp, match, critical)]
             if self._is_pet(source):
@@ -452,11 +476,24 @@ class EqlCombatParser:
             source=source,
         )
 
-    def _remember_pet(self, name: str) -> None:
-        self._pets[name.strip().casefold()] = name.strip()
+    def _remember_pet(self, name: str, *, charmed: bool = False) -> None:
+        key = name.strip().casefold()
+        if key not in self._pets:
+            # EQL exposes one controllable pet at a time. A new ownership
+            # handshake supersedes stale names found earlier in log history.
+            self._pets.clear()
+            self._charmed_pets.clear()
+        self._pets[key] = name.strip()
+        if charmed:
+            self._charmed_pets.add(key)
 
     def _forget_pet(self, name: str) -> None:
-        self._pets.pop(name.strip().casefold(), None)
+        key = name.strip().casefold()
+        self._pets.pop(key, None)
+        self._charmed_pets.discard(key)
+
+    def _is_charmed_pet(self, name: str) -> bool:
+        return name.strip().casefold() in self._charmed_pets
 
     def _is_pet(self, name: str) -> bool:
         lowered = name.strip().casefold()

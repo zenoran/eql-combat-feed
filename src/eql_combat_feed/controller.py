@@ -334,11 +334,12 @@ class CombatFeedController(QObject):
         if self.parser is None:
             return
         try:
-            for line in reversed(read_recent_lines(path)):
-                previous = self.parser.pet_names
+            # Ownership is stateful: "charmed" followed by "charm worn off"
+            # must replay in chronological order. Reverse-scanning finds the
+            # latest handshake quickly but can resurrect a pet that already
+            # expired later in the log.
+            for line in read_recent_lines(path):
                 self.parser.parse_line(line)
-                if self.parser.pet_names != previous:
-                    break
         except OSError:
             LOG.exception("Unable to scan recent log for pet identity")
 
