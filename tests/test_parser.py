@@ -96,6 +96,36 @@ def test_pet_must_be_identified_before_damage_is_credited() -> None:
     )
 
 
+def test_charm_lands_and_pet_is_credited_without_pet_attack_order() -> None:
+    """Real trace from Zenoran's log: charmed crusader was invisible until
+    an explicit /pet attack produced the 'Attacking X Master' handshake."""
+    parser = EqlCombatParser("Zenoran")
+    swing = TS + "An elemental crusader slashes an elemental wizard for 115 points of damage."
+    assert parser.parse_line(swing) == []
+
+    parser.parse_line(TS + "an elemental crusader has been charmed.")
+    event = parser.parse_line(swing)[0]
+    assert (event.kind, event.amount) == (EventKind.PET, 115)
+
+
+def test_charm_break_is_detected_when_pet_turns_on_you() -> None:
+    parser = EqlCombatParser("Zenoran")
+    parser.parse_line(TS + "an elemental crusader has been charmed.")
+    swing = TS + "An elemental crusader slashes an elemental wizard for 115 points of damage."
+    assert parser.parse_line(swing)[0].kind is EventKind.PET
+
+    # Charm breaks: the "pet" swings at YOU — via a hit or a miss.
+    hit_you = parser.parse_line(TS + "An elemental crusader cleaves YOU for 18 points of damage.")
+    assert hit_you[0].incoming
+    assert parser.parse_line(swing) == []  # no longer credited as pet
+
+    parser.parse_line(TS + "an elemental crusader has been charmed.")
+    assert parser.parse_line(swing)[0].kind is EventKind.PET
+    miss_you = parser.parse_line(TS + "An elemental crusader tries to hit YOU, but misses!")
+    assert miss_you[0].incoming
+    assert parser.parse_line(swing) == []
+
+
 def test_outgoing_character_and_identified_pet_misses_preserve_attack_type() -> None:
     parser = EqlCombatParser("Hero")
     parser.parse_line(TS + "A dread skeleton told you, 'Attacking a goblin Master.'")

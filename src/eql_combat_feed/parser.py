@@ -130,6 +130,10 @@ PET_LEADER_RE = re.compile(
     r"^(?P<pet>[A-Za-z][A-Za-z`' -]{0,60}?) says, 'My leader is (?P<owner>[A-Za-z]+)\.'$"
 )
 PET_ATTACK_RE = re.compile(r"^(?P<pet>.+?) told you, 'Attacking (?P<target>.+?) Master\.'$")
+# "an elemental crusader has been charmed." — emitted the moment your charm
+# lands, so a charm pet is attributed immediately instead of staying invisible
+# until it says "Attacking X Master." (which requires an explicit /pet attack).
+PET_CHARMED_RE = re.compile(r"^(?P<pet>.+?) has been charmed\.$", re.I)
 SELF_KILL_RE = re.compile(r"^You have slain (?P<target>.+?)!?$", re.I)
 PET_KILL_RE = re.compile(r"^(?P<target>.+?) has been slain by (?P<source>.+?)!?$", re.I)
 
@@ -192,6 +196,9 @@ class EqlCombatParser:
                 self._remember_pet(match.group("pet"))
             return []
         if match := PET_ATTACK_RE.match(body):
+            self._remember_pet(match.group("pet"))
+            return []
+        if match := PET_CHARMED_RE.match(body):
             self._remember_pet(match.group("pet"))
             return []
 
@@ -313,6 +320,11 @@ class EqlCombatParser:
             ability = self._physical_ability(verb) if verb else "Melee"
             return [self._status_event(timestamp, EventKind.MISS, ability, target)]
         if match := INCOMING_MISS_RE.match(body):
+            # A "pet" swinging at YOU means the charm broke — it isn't ours
+            # anymore. (The generic "spell has worn off of X" line can't signal
+            # this: a haste buff fading off a still-charmed pet looks the same.)
+            if self._is_pet(match.group("source")):
+                self._forget_pet(match.group("source"))
             return [
                 self._status_event(
                     timestamp,
@@ -359,6 +371,8 @@ class EqlCombatParser:
             source = match.group("source")
             target = match.group("target")
             if target.casefold() in {"you", "yourself"}:
+                if self._is_pet(source):
+                    self._forget_pet(source)
                 return [self._incoming_hit(timestamp, match, critical)]
             if self._is_pet(source):
                 spell = match.group("spell")
