@@ -72,7 +72,12 @@ class CombatFeedOverlay(QWidget):
     ICON_AMOUNT_GAP = 8.0
     DESCRIPTION_ICON_GAP = 6.0
     RESIZE_MARGIN = 18
-    MIN_WIDTH = 360
+    MIN_WIDTH = 240
+    # Worst plausible damage / DPS strings — the amount lane is sized to fit
+    # these and never grows, so extra window width all goes to descriptions.
+    AMOUNT_TEMPLATE = "888,888"
+    DPS_TEMPLATE = "888.8K DPS"
+    MIN_DESCRIPTION_WIDTH = 24.0
 
     def __init__(self, preferences: OverlayPreferences, actor: Actor = "character") -> None:
         super().__init__()
@@ -567,11 +572,24 @@ class CombatFeedOverlay(QWidget):
             self._font("Segoe UI", 21, QFont.Weight.Black),
         )
 
+    def _amount_lane_width(self) -> float:
+        amount_font = self._font("Segoe UI", 21, QFont.Weight.Black)
+        dps_font = self._font("Segoe UI", 13, QFont.Weight.Black)
+        widest = max(
+            QFontMetricsF(amount_font).horizontalAdvance(self.AMOUNT_TEMPLATE),
+            QFontMetricsF(dps_font).horizontalAdvance(self.DPS_TEMPLATE),
+        )
+        return widest + 8  # backdrop plate breathing room
+
     def _entry_rects(self, rect: QRectF) -> tuple[QRectF, QRectF, QRectF]:
-        spine_x = rect.center().x()
         icon_width = self.ICON_WIDTH * self.text_scale
         description_gap = self.DESCRIPTION_ICON_GAP * self.text_scale
         amount_gap = self.ICON_AMOUNT_GAP * self.text_scale
+        # Anchor the spine to the right: the amount lane is fixed-width (damage
+        # text has a known ceiling), so widening the window only grows the
+        # description lane instead of piling empty space right of the numbers.
+        spine_x = rect.right() - self._amount_lane_width() - amount_gap - icon_width / 2
+        spine_x = max(spine_x, rect.left() + self.MIN_DESCRIPTION_WIDTH + icon_width / 2)
         icon_rect = QRectF(
             spine_x - icon_width / 2,
             rect.top(),

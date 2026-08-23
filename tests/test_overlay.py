@@ -283,6 +283,30 @@ def test_window_width_and_font_size_remain_independent() -> None:
     app.processEvents()
 
 
+def test_extra_width_grows_descriptions_not_the_amount_lane() -> None:
+    """Widening the window must not pile empty space right of the numbers."""
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(size=QSize(400, 420)), "pet")
+    _, _, narrow_amount = overlay._entry_rects(row_rect(overlay))
+
+    overlay.resize(900, 420)
+    _, wide_icon, wide_amount = overlay._entry_rects(row_rect(overlay))
+
+    # Amount lane is fixed-width — damage text has a known ceiling.
+    assert wide_amount.width() == pytest.approx(narrow_amount.width())
+    # The lane hugs the right edge instead of starting at the window's center.
+    assert wide_amount.right() == pytest.approx(row_rect(overlay).right())
+    assert wide_icon.center().x() > overlay.width() / 2
+    # And it fits the worst-case templates at the current scale.
+    amount_font = overlay._font("Segoe UI", 21, QFont.Weight.Black)
+    dps_font = overlay._font("Segoe UI", 13, QFont.Weight.Black)
+    assert wide_amount.width() >= QFontMetricsF(amount_font).horizontalAdvance("888,888")
+    assert wide_amount.width() >= QFontMetricsF(dps_font).horizontalAdvance("888.8K DPS")
+
+    overlay.close()
+    app.processEvents()
+
+
 def test_resize_zone_is_large_and_mouse_press_starts_resize() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = CombatFeedOverlay(OverlayPreferences(), "character")
