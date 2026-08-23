@@ -359,3 +359,21 @@ def test_critical_amount_is_red_without_extra_label() -> None:
 
     assert CombatFeedOverlay._amount_color(critical, "character") == QColor("#ff2020")
     assert CombatFeedOverlay._source_parts(critical, "character") == ("", "⚔")
+
+
+def test_tooltip_help_event_uses_qhelpevent_api_without_crashing() -> None:
+    """Regression: QHelpEvent has pos()/globalPos(), not position() — hovering
+    a row for a tooltip raised AttributeError in the field (0.14.1 crash log)."""
+    QHelpEvent = qt_gui.QHelpEvent
+    QEvent = qt_core.QEvent
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(), "character")
+    overlay.add_event(event(123, EventKind.SPELL, ability="Lifedraw"))
+
+    rect = row_rect(overlay)
+    local = QPoint(round(rect.center().x()), round(rect.center().y()))
+    help_event = QHelpEvent(QEvent.Type.ToolTip, local, overlay.mapToGlobal(local))
+    assert overlay.event(help_event) is True  # handled: tooltip shown, no crash
+
+    overlay.close()
+    app.processEvents()
