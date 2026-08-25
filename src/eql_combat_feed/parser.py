@@ -134,6 +134,19 @@ PET_ATTACK_RE = re.compile(r"^(?P<pet>.+?) told you, 'Attacking (?P<target>.+?) 
 # lands, so a charm pet is attributed immediately instead of staying invisible
 # until it says "Attacking X Master." (which requires an explicit /pet attack).
 PET_CHARMED_RE = re.compile(r"^(?P<pet>.+?) has been charmed\.$", re.I)
+# Bard charm (Solon's Bewitching Bravura) emits no "has been charmed." line at
+# all — the only birth certificate in the log is the generic charm land message
+# "<mob>'s eyes glaze over."  That message is also visible for other players'
+# charms, so it only registers a pet within a short window after our own charm
+# cast started ("You begin singing/casting <charm spell>").  Re-glazes of an
+# already-known pet refresh attribution regardless of the window, because a
+# held bard charm song re-lands silently on later pulses.
+CHARM_CAST_BEGIN_RE = re.compile(r"^You begin (?:singing|casting) (?P<spell>.+?)\.$", re.I)
+CHARM_GLAZE_RE = re.compile(r"^(?P<pet>.+?)'s eyes glaze over\.$", re.I)
+CHARM_GLAZE_WINDOW_S = 12.0
+# EQL upgraded spells log with a trailing rank ("Solon's Bewitching Bravura
+# III"); strip it before comparing against CHARM_SPELLS.
+_SPELL_RANK_RE = re.compile(r"\s+[IVXL]+$")
 SPELL_WORN_OFF_RE = re.compile(
     r"^Your (?P<spell>.+?) spell has worn off of (?P<target>.+?)\.$", re.I
 )
@@ -148,8 +161,13 @@ CHARM_SPELLS = {
     "call of karana",
     "charm",
     "dictate",
+    "solon's bewitching bravura",
     "solon's song of the sirens",
 }
+
+
+def _normalized_spell(spell: str) -> str:
+    return _SPELL_RANK_RE.sub("", spell.strip()).casefold()
 SELF_KILL_RE = re.compile(r"^You have slain (?P<target>.+?)!?$", re.I)
 PET_KILL_RE = re.compile(r"^(?P<target>.+?) has been slain by (?P<source>.+?)!?$", re.I)
 
@@ -185,6 +203,7 @@ class EqlCombatParser:
         self.character_name = character_name
         self._pets: dict[str, str] = {}
         self._charmed_pets: set[str] = set()
+        self._last_charm_cast: float | None = None
 
     @property
     def pet_names(self) -> frozenset[str]:
@@ -218,8 +237,21 @@ class EqlCombatParser:
         if match := PET_CHARMED_RE.match(body):
             self._remember_pet(match.group("pet"), charmed=True)
             return []
+        if match := CHARM_CAST_BEGIN_RE.match(body):
+            if _normalized_spell(match.group("spell")) in CHARM_SPELLS:
+                self._last_charm_cast = timestamp
+            return []
+        if match := CHARM_GLAZE_RE.match(body):
+            pet = match.group("pet")
+            recently_charming = (
+                self._last_charm_cast is not None
+                and 0 <= timestamp - self._last_charm_cast <= CHARM_GLAZE_WINDOW_S
+            )
+            if recently_charming or self._is_pet(pet):
+                self._remember_pet(pet, charmed=True)
+            return []
         if match := SPELL_WORN_OFF_RE.match(body):
-            if match.group("spell").strip().casefold() in CHARM_SPELLS:
+            if _normalized_spell(match.group("spell")) in CHARM_SPELLS:
                 self._forget_pet(match.group("target"))
             return []
 

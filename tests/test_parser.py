@@ -108,6 +108,56 @@ def test_charm_lands_and_pet_is_credited_without_pet_attack_order() -> None:
     assert (event.kind, event.amount) == (EventKind.PET, 115)
 
 
+def test_bard_charm_glaze_credits_pet_without_charmed_line() -> None:
+    """Real trace from Zenoran's Plane of Fear farm: Solon's Bewitching Bravura
+    emits no 'has been charmed.' line — the only land signal is
+    "<mob>'s eyes glaze over." The charmed abhorrent's entire encounter went
+    untracked because the parser never learned it was a pet."""
+    parser = EqlCombatParser("Zenoran")
+    swing = TS + "An abhorrent hits an ire ghast for 68 points of damage."
+    assert parser.parse_line(swing) == []
+
+    parser.parse_line(TS + "You begin singing Solon's Bewitching Bravura.")
+    parser.parse_line(TS + "an abhorrent's eyes glaze over.")
+    event = parser.parse_line(swing)[0]
+    assert (event.kind, event.amount, event.source) == (EventKind.PET, 68, "An abhorrent")
+
+
+def test_glaze_without_recent_own_charm_cast_is_ignored() -> None:
+    """Another player's charm also prints the glaze line; without our own
+    recent charm cast it must not create a pet."""
+    parser = EqlCombatParser("Zenoran")
+    parser.parse_line(TS + "an abhorrent's eyes glaze over.")
+    assert parser.parse_line(TS + "An abhorrent hits an ire ghast for 68 points of damage.") == []
+
+
+def test_glaze_outside_charm_window_is_ignored_but_reglaze_refreshes_known_pet() -> None:
+    parser = EqlCombatParser("Zenoran")
+    late = "[Sat Aug 22 10:14:22 2026] "  # 60s after TS, outside the 12s window
+    rat_swing = "A revultant rat bites an ire ghast for 40 points of damage."
+    parser.parse_line(TS + "You begin singing Solon's Bewitching Bravura.")
+    parser.parse_line(late + "a revultant rat's eyes glaze over.")
+    assert parser.parse_line(late + rat_swing) == []
+
+    # But a held song silently re-lands on later pulses: once known, a
+    # re-glaze refreshes the same pet regardless of the window.
+    parser.parse_line(TS + "You begin singing Solon's Bewitching Bravura.")
+    parser.parse_line(TS + "a revultant rat's eyes glaze over.")
+    parser.parse_line(late + "a revultant rat's eyes glaze over.")
+    assert parser.parse_line(late + rat_swing)[0].kind is EventKind.PET
+
+
+def test_ranked_charm_song_and_bravura_expiry_clear_pet() -> None:
+    parser = EqlCombatParser("Zenoran")
+    parser.parse_line(TS + "You begin singing Solon's Bewitching Bravura III.")
+    parser.parse_line(TS + "an abhorrent's eyes glaze over.")
+    swing = TS + "An abhorrent hits an ire ghast for 68 points of damage."
+    assert parser.parse_line(swing)[0].kind is EventKind.PET
+
+    parser.parse_line(TS + "Your Solon's Bewitching Bravura spell has worn off of an abhorrent.")
+    assert parser.parse_line(swing) == []
+
+
 def test_same_named_hostile_does_not_erase_charmed_pet_identity() -> None:
     """Live trace: one lava crawler is charmed while identical crawlers hit YOU."""
     parser = EqlCombatParser("Zenoran")
