@@ -518,6 +518,30 @@ def test_critical_amount_is_red_without_extra_label() -> None:
     assert CombatFeedOverlay._source_parts(critical, "character") == ("", "⚔")
 
 
+def test_critical_rows_use_impact_font_for_number() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(), "character")
+    plain = event(123, EventKind.SPELL, ability="Ice Comet")
+    crit = CombatEvent(
+        timestamp=plain.timestamp,
+        kind=plain.kind,
+        amount=plain.amount,
+        ability=plain.ability,
+        target=plain.target,
+        critical=True,
+        source=plain.source,
+    )
+
+    _, plain_amount_font = overlay._entry_value_fonts(plain)
+    _, crit_amount_font = overlay._entry_value_fonts(crit)
+    assert plain_amount_font.family() == "Segoe UI"
+    assert crit_amount_font.family() == "Impact"
+    assert crit_amount_font.pointSizeF() > plain_amount_font.pointSizeF()
+
+    overlay.close()
+    app.processEvents()
+
+
 def test_tooltip_help_event_uses_qhelpevent_api_without_crashing() -> None:
     """Regression: QHelpEvent has pos()/globalPos(), not position() — hovering
     a row for a tooltip raised AttributeError in the field (0.14.1 crash log)."""

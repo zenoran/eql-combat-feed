@@ -39,6 +39,10 @@ HEADER_BACKDROP_COLOR = QColor(4, 7, 10, 210)
 HEADER_DPS_BACKDROP_COLOR = QColor(0, 0, 0, 175)
 BACKDROP_COLOR = QColor(0, 0, 0, 190)
 HIT_SURFACE_COLOR = QColor(0, 0, 0, 1)
+# Crits get comic-book treatment: Impact (condensed, heavy, ships with
+# Windows) in fire colors for both the ability name and the number.
+CRIT_FONT_FAMILY = "Impact"
+CRIT_LABEL_COLOR = QColor("#ffb019")
 SOURCE_COLORS = {
     EventKind.MELEE: QColor("#ffff00"),
     EventKind.SKILL: QColor("#ff9d00"),
@@ -652,12 +656,16 @@ class CombatFeedOverlay(QWidget):
 
     def _paint_entry(self, painter: QPainter, rect: QRectF, event: CombatEvent) -> None:
         description, icon = self._source_parts(event, self.actor)
-        label_color = SOURCE_COLORS[event.kind]
+        label_color = CRIT_LABEL_COLOR if event.critical else SOURCE_COLORS[event.kind]
         amount_color = self._amount_color(event, self.actor)
         amount_text = "MISS" if event.kind is EventKind.MISS else f"{event.amount:,}"
         description_rect, icon_rect, amount_rect = self._entry_rects(rect)
 
-        description_font = self._font("Segoe UI", 12, QFont.Weight.Black)
+        if event.critical:
+            # Impact carries its own weight; Black would distort its metrics.
+            description_font = self._font(CRIT_FONT_FAMILY, 13, QFont.Weight.Normal)
+        else:
+            description_font = self._font("Segoe UI", 12, QFont.Weight.Black)
         painter.setFont(description_font)
         description = painter.fontMetrics().elidedText(
             description,
@@ -694,10 +702,12 @@ class CombatFeedOverlay(QWidget):
 
     def _entry_value_fonts(self, event: CombatEvent) -> tuple[QFont, QFont]:
         scale = self.MISS_SCALE if event.kind is EventKind.MISS else 1.0
-        return (
-            self._font("Segoe UI Symbol", 17 * scale, QFont.Weight.Black),
-            self._font("Segoe UI", 21 * scale, QFont.Weight.Black),
-        )
+        icon_font = self._font("Segoe UI Symbol", 17 * scale, QFont.Weight.Black)
+        if event.critical:
+            # Slightly larger is safe: Impact is condensed, so the number still
+            # fits the fixed amount lane measured against Segoe UI Black.
+            return icon_font, self._font(CRIT_FONT_FAMILY, 22 * scale, QFont.Weight.Normal)
+        return icon_font, self._font("Segoe UI", 21 * scale, QFont.Weight.Black)
 
     def _amount_lane_width(self) -> float:
         amount_font = self._font("Segoe UI", 21, QFont.Weight.Black)

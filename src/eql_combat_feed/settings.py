@@ -43,7 +43,7 @@ class SettingsStore:
         log_file = self._settings.value("log/file", "", str)
         damage_font_size, header_font_size = self._font_sizes()
         preferences = OverlayPreferences(
-            max_rows=self._bounded_int("display/max_rows", 5, 3, 8),
+            max_rows=self._bounded_int("display/max_rows", 5, 3, 20),
             history_rows=self._bounded_int("display/history_rows", 100, 10, 1000),
             damage_font_size=damage_font_size,
             header_font_size=header_font_size,

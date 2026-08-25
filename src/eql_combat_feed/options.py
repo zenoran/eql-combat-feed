@@ -44,7 +44,7 @@ class OptionsDialog(QDialog):
         self.header_font_size.setValue(preferences.header_font_size)
 
         self.max_rows = QSpinBox()
-        self.max_rows.setRange(3, 8)
+        self.max_rows.setRange(3, 20)
         self.max_rows.setValue(preferences.max_rows)
 
         self.history_rows = QSpinBox()
