@@ -5,6 +5,7 @@ import sys
 from collections.abc import Callable
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QTimer
+from PySide6.QtGui import QCursor
 
 VK_CONTROL = 0x11
 VK_MENU = 0x12
@@ -61,6 +62,23 @@ class GlobalWheelCapture:
         if sys.platform != "win32":
             return False
         user32 = ctypes.windll.user32
+        # Explicit 64-bit-safe signatures: the default c_int restype would
+        # truncate the HHOOK handle and the CallNextHookEx result.
+        user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        user32.SetWindowsHookExW.argtypes = [
+            ctypes.c_int,
+            _HOOKPROC,
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+        ]
+        user32.CallNextHookEx.restype = ctypes.c_ssize_t
+        user32.CallNextHookEx.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+        ]
+        user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
 
         @_HOOKPROC
         def proc(n_code: int, w_param: int, l_param: int) -> int:
@@ -75,7 +93,13 @@ class GlobalWheelCapture:
                         if delta > 0
                         else -(-delta // WHEEL_NOTCH)
                     )
-                    if steps and self.router(data.pt.x, data.pt.y, steps):
+                    # DPI trap: the hook's MSLLHOOKSTRUCT point is PHYSICAL
+                    # screen pixels, while Qt geometry lives in logical
+                    # (scaled) pixels — at 175% display scale they never
+                    # match. QCursor.pos() is already logical and identical
+                    # to what the hover check compares against.
+                    position = QCursor.pos()
+                    if steps and self.router(position.x(), position.y(), steps):
                         return 1
                 except Exception:  # noqa: BLE001 — never break the system mouse
                     pass
