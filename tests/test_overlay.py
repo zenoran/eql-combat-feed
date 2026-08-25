@@ -570,3 +570,109 @@ def test_tooltip_help_event_uses_qhelpevent_api_without_crashing() -> None:
 
     overlay.close()
     app.processEvents()
+
+
+class _FakeClock:
+    def __init__(self, start: float = 1000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _fading_overlay(**prefs: object) -> tuple[CombatFeedOverlay, _FakeClock]:
+    QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(
+        OverlayPreferences(fade_delay=10, **prefs), "character"
+    )
+    clock = _FakeClock()
+    overlay._now = clock  # type: ignore[method-assign]
+    return overlay, clock
+
+
+def test_rows_fade_out_after_inactivity_and_stop_taking_space() -> None:
+    overlay, clock = _fading_overlay()
+    for amount in (100, 200, 300):
+        overlay.add_event(event(amount))
+    assert len(overlay._visible_entries()) == 3
+
+    clock.now += 9.9  # still inside the delay: fully opaque
+    assert all(overlay._entry_alpha(e) == 1.0 for e in overlay._entries)
+
+    clock.now += 0.85  # mid-fade
+    mid = overlay._entry_alpha(overlay._entries[0])
+    assert 0.0 < mid < 1.0
+    assert mid == pytest.approx(0.5, abs=0.05)
+
+    clock.now += 5.0  # long past delay + fade duration
+    assert all(overlay._entry_alpha(e) == 0.0 for e in overlay._entries)
+    assert overlay._visible_entries() == []
+    # Decayed rows leave display but stay in history.
+    assert len(overlay._entries) == 3
+
+    overlay.add_event(event(400))
+    visible = overlay._visible_entries()
+    assert [e.event.amount for e in visible] == [400]
+
+    overlay.close()
+
+
+def test_each_row_decays_on_its_own_clock() -> None:
+    overlay, clock = _fading_overlay()
+    overlay.add_event(event(100))
+    clock.now += 8.0
+    overlay.add_event(event(200))
+    clock.now += 3.0  # first row age 11s (fading), second age 3s (opaque)
+    first, second = overlay._entries
+    assert 0.0 < overlay._entry_alpha(first) < 1.0
+    assert overlay._entry_alpha(second) == 1.0
+    assert [e.event.amount for e in overlay._visible_entries()] == [100, 200]
+    overlay.close()
+
+
+def test_history_scroll_pauses_decay_and_shows_full_opacity() -> None:
+    overlay, clock = _fading_overlay(max_rows=2, size=QSize(600, 140))
+    for amount in (100, 200, 300, 400):
+        overlay.add_event(event(amount))
+    clock.now += 30.0
+    assert overlay._visible_entries() == []
+
+    overlay._history_offset = 2
+    assert all(overlay._entry_alpha(e) == 1.0 for e in overlay._entries)
+    assert overlay._visible_entries() != []
+
+    overlay._history_offset = 0
+    assert overlay._visible_entries() == []
+    overlay.close()
+
+
+def test_fade_disabled_keeps_rows_indefinitely() -> None:
+    overlay, clock = _fading_overlay(fade_rows=False)
+    overlay.add_event(event(100))
+    clock.now += 3600.0
+    assert overlay._entry_alpha(overlay._entries[0]) == 1.0
+    assert len(overlay._visible_entries()) == 1
+    overlay.close()
+
+
+def test_tick_repaints_only_while_a_fade_is_in_motion() -> None:
+    overlay, clock = _fading_overlay()
+    overlay.add_event(event(100))
+    updates: list[int] = []
+    overlay.update = lambda *a: updates.append(1)  # type: ignore[method-assign]
+
+    overlay.tick()  # first signature capture
+    overlay.tick()  # stable while fully opaque
+    assert len(updates) == 1
+
+    clock.now += 10.5  # mid-fade: every tick repaints
+    overlay.tick()
+    clock.now += 0.05
+    overlay.tick()
+    assert len(updates) == 3
+
+    clock.now += 30.0  # fully decayed: one final repaint, then quiet
+    overlay.tick()
+    overlay.tick()
+    assert len(updates) == 4
+    overlay.close()

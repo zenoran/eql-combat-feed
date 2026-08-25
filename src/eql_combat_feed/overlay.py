@@ -1,6 +1,7 @@
 """Frameless, high-contrast, single-actor damage feed window."""
 
 from dataclasses import dataclass
+from time import monotonic
 from typing import Literal
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
@@ -28,6 +29,7 @@ ResizeEdge = Literal["left", "right", "top", "bottom"]
 @dataclass(slots=True)
 class DisplayEntry:
     event: CombatEvent
+    received: float = 0.0
 
 
 CHARACTER_HEADER = QColor("#ffff00")
@@ -47,6 +49,11 @@ CRIT_LABEL_COLOR = QColor("#ffe14a")
 CRIT_ICON_COLOR = QColor("#ff7300")
 CRIT_ICON = "✸"
 CRIT_ROW_SCALE = 1.6
+# Text decay: rows sit at full opacity for preferences.fade_delay seconds
+# after arrival, then fade out over FADE_DURATION_S and stop taking up
+# space, so the feed melts away between fights. History scrolling shows
+# everything at full opacity — decay never fights the reader.
+FADE_DURATION_S = 1.5
 SOURCE_COLORS = {
     EventKind.MELEE: QColor("#ffff00"),
     EventKind.SKILL: QColor("#ff9d00"),
@@ -112,6 +119,7 @@ class CombatFeedOverlay(QWidget):
         self._controls_visible = False
         self._locked = False
         self._dps = DpsSnapshot()
+        self._fade_signature: tuple[float, ...] = ()
 
         actor_name = "You" if actor == "character" else "Pet"
         self.setWindowTitle(f"EQL Combat Feed — {actor_name}")
@@ -170,7 +178,7 @@ class CombatFeedOverlay(QWidget):
             return False
         if self._history_offset:
             self._history_offset += 1
-        self._entries.append(DisplayEntry(event))
+        self._entries.append(DisplayEntry(event, self._now()))
         overflow = max(0, len(self._entries) - self.preferences.history_rows)
         if overflow:
             del self._entries[:overflow]
@@ -195,7 +203,30 @@ class CombatFeedOverlay(QWidget):
         self.update()
 
     def tick(self) -> None:
-        return
+        # Driven by the controller's 50ms animation timer. Repaint only while
+        # a fade is actually in motion: the quantized alpha signature is stable
+        # both before any row reaches its delay and after everything has faded.
+        if not self.preferences.fade_rows or not self._entries:
+            return
+        signature = tuple(
+            round(self._entry_alpha(entry), 2) for entry in self._entries
+        )
+        if signature != self._fade_signature:
+            self._fade_signature = signature
+            self.update()
+
+    @staticmethod
+    def _now() -> float:
+        return monotonic()
+
+    def _entry_alpha(self, entry: DisplayEntry) -> float:
+        if not self.preferences.fade_rows or self._history_offset:
+            return 1.0
+        age = self._now() - entry.received
+        fading = age - self.preferences.fade_delay
+        if fading <= 0:
+            return 1.0
+        return max(0.0, 1.0 - fading / FADE_DURATION_S)
 
     def paintEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         del event
@@ -346,6 +377,10 @@ class CombatFeedOverlay(QWidget):
         picked: list[DisplayEntry] = []
         used = 0.0
         for entry in reversed(self._entries[:end]):
+            if self._entry_alpha(entry) <= 0:
+                # Alpha only decreases with age, so everything older is
+                # fully decayed too. Entries stay in history for scrollback.
+                break
             height = self._entry_height(entry.event)
             if picked and (
                 used + height > available or len(picked) >= self.preferences.max_rows
@@ -678,8 +713,10 @@ class CombatFeedOverlay(QWidget):
         for entry in self._visible_entries():
             height = self._entry_height(entry.event)
             rect = QRectF(content.left(), y, content.width(), height)
+            painter.setOpacity(self._entry_alpha(entry))
             self._paint_entry(painter, rect, entry.event)
             y += height
+        painter.setOpacity(1.0)
 
     def _paint_entry(self, painter: QPainter, rect: QRectF, event: CombatEvent) -> None:
         crit = self._is_crit_row(event)

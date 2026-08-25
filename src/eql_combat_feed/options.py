@@ -57,6 +57,16 @@ class OptionsDialog(QDialog):
         self.encounter_timeout.setSuffix(" seconds")
         self.encounter_timeout.setValue(preferences.encounter_timeout)
 
+        self.fade_rows = QCheckBox("Fade rows out after inactivity")
+        self.fade_rows.setChecked(preferences.fade_rows)
+
+        self.fade_delay = QSpinBox()
+        self.fade_delay.setRange(3, 120)
+        self.fade_delay.setSuffix(" seconds")
+        self.fade_delay.setValue(preferences.fade_delay)
+        self.fade_delay.setEnabled(preferences.fade_rows)
+        self.fade_rows.toggled.connect(self.fade_delay.setEnabled)
+
         self.show_pet = QCheckBox("Show separate Pet damage window")
         self.show_pet.setChecked(preferences.show_pet)
 
@@ -92,6 +102,8 @@ class OptionsDialog(QDialog):
         form.addRow("Maximum visible rows", self.max_rows)
         form.addRow("History rows per window", self.history_rows)
         form.addRow("End encounter after", self.encounter_timeout)
+        form.addRow("Text decay", self.fade_rows)
+        form.addRow("Fade rows after", self.fade_delay)
         form.addRow("Pet feed", self.show_pet)
         form.addRow("Game exit", self.auto_quit_with_game)
         form.addRow("Close button", self.minimize_to_tray)
@@ -130,6 +142,8 @@ class OptionsDialog(QDialog):
             damage_font_size=self.damage_font_size.value(),
             header_font_size=self.header_font_size.value(),
             encounter_timeout=self.encounter_timeout.value(),
+            fade_rows=self.fade_rows.isChecked(),
+            fade_delay=self.fade_delay.value(),
             show_pet=self.show_pet.isChecked(),
             auto_quit_with_game=self.auto_quit_with_game.isChecked(),
             minimize_to_tray=self.minimize_to_tray.isChecked(),
@@ -162,6 +176,8 @@ class OptionsDialog(QDialog):
         self.max_rows.setValue(defaults.max_rows)
         self.history_rows.setValue(defaults.history_rows)
         self.encounter_timeout.setValue(defaults.encounter_timeout)
+        self.fade_rows.setChecked(defaults.fade_rows)
+        self.fade_delay.setValue(defaults.fade_delay)
         self.show_pet.setChecked(defaults.show_pet)
         self.auto_quit_with_game.setChecked(defaults.auto_quit_with_game)
         self.minimize_to_tray.setChecked(defaults.minimize_to_tray)
