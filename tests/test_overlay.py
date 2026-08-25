@@ -536,8 +536,12 @@ def test_critical_rows_keep_normal_pitch_with_bigger_text() -> None:
     _, crit_amount_font = overlay._entry_value_fonts(crit)
     assert crit_amount_font.family() == plain_amount_font.family() == "Segoe UI"
     assert crit_amount_font.pointSizeF() > plain_amount_font.pointSizeF()
-    # Same row pitch as every other row — bigger text, no padding gap (0.17.0).
-    assert overlay._entry_height(crit) == pytest.approx(overlay._entry_height(plain))
+    # Content-driven pitch: the crit row grows to fit its bigger number,
+    # but the visual whitespace around it matches every other row (0.17.5).
+    assert overlay._entry_height(crit) > overlay._entry_height(plain)
+    crit_gap = overlay._entry_height(crit) - overlay._plate_height(crit)
+    plain_gap = overlay._entry_height(plain) - overlay._plate_height(plain)
+    assert crit_gap == pytest.approx(plain_gap)
 
     # MISS crits stay ordinary rows.
     miss = CombatEvent(
@@ -549,10 +553,8 @@ def test_critical_rows_keep_normal_pitch_with_bigger_text() -> None:
         critical=True,
         source=plain.source,
     )
-    # MISS crits are status rows: compact pitch, never crit-sized (0.17.1).
-    assert overlay._entry_height(miss) == pytest.approx(
-        overlay._entry_height(plain) * overlay.STATUS_ROW_SCALE
-    )
+    # MISS crits are status rows: compact, never crit-sized.
+    assert overlay._entry_height(miss) < overlay._entry_height(plain)
 
     overlay.close()
     app.processEvents()
@@ -740,10 +742,8 @@ def test_resist_rows_render_smaller_with_spell_name_and_resist_text() -> None:
         hit_font.pointSizeF() * overlay.MISS_SCALE
     )
 
-    # Resist rows are compact status rows: shorter pitch, never crit-sized.
-    assert overlay._entry_height(resist) == pytest.approx(
-        overlay._row_height() * overlay.STATUS_ROW_SCALE
-    )
+    # Resist rows are compact status rows: shorter than hits, never crit-sized.
+    assert overlay._entry_height(resist) < overlay._entry_height(event(123))
 
     overlay.close()
     app.processEvents()
@@ -793,9 +793,7 @@ def test_status_rows_are_shorter_and_darker_than_hit_rows() -> None:
     hit = event(123, EventKind.MELEE)
 
     for status in (miss, resist):
-        assert overlay._entry_height(status) == pytest.approx(
-            overlay._entry_height(hit) * overlay.STATUS_ROW_SCALE
-        )
+        assert overlay._entry_height(status) < overlay._entry_height(hit)
 
     # Dim, not bright: status colors stay well below full-brightness lanes.
     miss_color = CombatFeedOverlay._amount_color(miss, "character")
@@ -878,3 +876,39 @@ def test_leaving_a_locked_feed_releases_scrolled_history() -> None:
     overlay.tick()
     assert overlay._history_offset == 2
     overlay.close()
+
+
+def test_visual_gap_between_rows_is_constant_across_all_row_types() -> None:
+    """Regression (0.17.4 screenshot): uniform row pitch with mixed glyph
+    sizes made crit plates touch their neighbors while plain rows kept ~7px
+    of air — ragged spacing. Pitch is now content-driven: every row is its
+    plate plus ONE constant gap, so whitespace reads identical everywhere."""
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(), "character")
+    plain = event(306, EventKind.MELEE)
+    crit = CombatEvent(
+        timestamp=1.0, kind=EventKind.SPELL, amount=4086, ability="Ice Comet",
+        target="a mob", critical=True, source="You",
+    )
+    miss = event(0, EventKind.MISS)
+    resist = CombatEvent(
+        timestamp=1.0, kind=EventKind.RESIST, ability="Selo's Chords",
+        target="a mob", source="You",
+    )
+
+    gaps = {
+        kind: overlay._entry_height(e) - overlay._plate_height(e)
+        for kind, e in {"plain": plain, "crit": crit, "miss": miss, "resist": resist}.items()
+    }
+    assert all(
+        gap == pytest.approx(overlay.ROW_GAP * overlay.text_scale) for gap in gaps.values()
+    ), gaps
+    # And the ordering that motivates it: crit > plain > status rows.
+    assert (
+        overlay._entry_height(crit)
+        > overlay._entry_height(plain)
+        > overlay._entry_height(miss)
+        == overlay._entry_height(resist)
+    )
+    overlay.close()
+    app.processEvents()

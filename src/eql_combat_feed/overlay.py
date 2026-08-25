@@ -43,15 +43,16 @@ HEADER_DPS_BACKDROP_COLOR = QColor(0, 0, 0, 175)
 BACKDROP_COLOR = QColor(0, 0, 0, 190)
 HIT_SURFACE_COLOR = QColor(0, 0, 0, 1)
 # Crits explode in place: a ✸ burst icon and clearly bigger/heavier text in
-# fire colors at the SAME row pitch as everything else. No exotic font, no
-# glow ring, no taller row — all three were tried (0.15.2–0.16.0) and read
-# worse at combat glance-speed; the 1.6x row growth in particular left a
-# padding gap around the number instead of feeling bigger. Digit cap height
-# at 28pt still fits a normal row, so uniform spacing costs nothing.
+# fire colors. No exotic font, no glow ring, no fixed row-scale multiplier —
+# all were tried (0.15.2–0.17.4) and read worse at combat glance-speed.
+# Row pitch is content-driven (see _entry_height): every row is its text
+# plate plus one constant gap, so the VISUAL whitespace between rows is
+# identical whether the neighbors are a 28pt crit, a 21pt hit, or a 13pt
+# miss. Uniform pitch with mixed glyph sizes produced ragged gaps (crit
+# plates touching, miss plates floating) — Nick's 0.17.4 screenshot.
 CRIT_LABEL_COLOR = QColor("#ffe14a")
 CRIT_ICON_COLOR = QColor("#ff7300")
 CRIT_ICON = "✸"
-CRIT_ROW_SCALE = 1.0
 # Text decay: rows sit at full opacity for preferences.fade_delay seconds
 # after arrival, then fade out over FADE_DURATION_S and stop taking up
 # space, so the feed melts away between fights. History scrolling shows
@@ -103,11 +104,15 @@ class CombatFeedOverlay(QWidget):
     AMOUNT_TEMPLATE = "888,888"
     DPS_TEMPLATE = "99,999 DPS"
     MIN_DESCRIPTION_WIDTH = 24.0
-    # Miss/resist rows: smaller text in a shorter row, conserving vertical
-    # space for hits. STATUS_ROW_SCALE shrinks the row pitch; MISS_SCALE
-    # shrinks the text inside it.
+    # Miss/resist rows: smaller text (MISS_SCALE) in a row that hugs it —
+    # row height is content-driven, so shrinking the text shrinks the row.
     MISS_SCALE = 0.62
-    STATUS_ROW_SCALE = 0.72
+    # The constant visual whitespace between adjacent row plates (scaled by
+    # text size). This, not row pitch, is what reads as "spacing".
+    ROW_GAP = 7.0
+    # Vertical breathing room the backdrop plate adds around glyphs (±2px,
+    # mirrors _text_backdrop_rect).
+    PLATE_PAD = 4.0
     HEADER_FONT_BASE = 16.8
     HEADER_ACTOR_GAP = 12.0
     HEADER_DPS_GAP = 8.0
@@ -413,12 +418,15 @@ class CombatFeedOverlay(QWidget):
     def _is_status_row(event: CombatEvent) -> bool:
         return event.kind in (EventKind.MISS, EventKind.RESIST)
 
+    def _plate_height(self, event: CombatEvent) -> float:
+        _, amount_font = self._entry_value_fonts(event)
+        return QFontMetricsF(amount_font).capHeight() + self.PLATE_PAD
+
     def _entry_height(self, event: CombatEvent) -> float:
-        if self._is_crit_row(event):
-            return self._row_height() * CRIT_ROW_SCALE
-        if self._is_status_row(event):
-            return self._row_height() * self.STATUS_ROW_SCALE
-        return self._row_height()
+        # Content-driven pitch: the row is exactly its amount plate plus one
+        # constant gap. Whitespace between any two adjacent rows is therefore
+        # identical regardless of how big either row's text is.
+        return self._plate_height(event) + self.ROW_GAP * self.text_scale
 
     def _visible_entries(self) -> list[DisplayEntry]:
         # Crit rows are taller, so visibility is a height budget rather than a
@@ -829,8 +837,8 @@ class CombatFeedOverlay(QWidget):
 
     def _entry_value_fonts(self, event: CombatEvent) -> tuple[QFont, QFont]:
         if self._is_crit_row(event):
-            # The crit row is CRIT_ROW_SCALE taller, so the number scales up
-            # with it: clearly bigger, same heavy readable face as normal rows.
+            # Clearly bigger, same heavy readable face as normal rows; the
+            # content-driven row height grows to fit it plus the standard gap.
             return (
                 self._font("Segoe UI Symbol", 22, QFont.Weight.Black),
                 self._font("Segoe UI", 28, QFont.Weight.Black),
