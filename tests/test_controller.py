@@ -371,3 +371,22 @@ def test_update_notification_reaches_control_window(tmp_path: Path) -> None:
     assert controller.window.update_label.isVisible()
     assert "9.9.9" in controller.window.update_label.text()
     stop_controller(controller)
+
+
+def test_hooked_wheel_routes_only_to_visible_locked_overlays(tmp_path: Path) -> None:
+    """The WH_MOUSE_LL router consumes notches over a visible locked feed and
+    leaves every other screen position (and unlocked feeds) to the game."""
+    app, log, settings, controller = make_controller(tmp_path)
+    you = controller.you_overlay
+    inside = you.frameGeometry().center()
+    outside = QPoint(you.frameGeometry().right() + 500, you.frameGeometry().bottom() + 500)
+
+    controller.set_locked(True)
+    assert controller._route_locked_wheel(inside.x(), inside.y(), 1) is True
+    assert controller._route_locked_wheel(outside.x(), outside.y(), 1) is False
+
+    controller.set_locked(False)
+    assert controller._route_locked_wheel(inside.x(), inside.y(), 1) is False
+
+    controller.wheel_capture.unregister()
+    controller.hotkey.unregister()

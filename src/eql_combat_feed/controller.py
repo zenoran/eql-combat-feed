@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSy
 
 from . import __version__
 from .dps import EncounterDpsMeter
-from .hotkey import GlobalLockHotkey
+from .hotkey import GlobalLockHotkey, GlobalWheelCapture
 from .options import OptionsDialog
 from .overlay import Actor, CombatFeedOverlay
 from .parser import EqlCombatParser, character_name_from_log
@@ -95,6 +95,8 @@ class CombatFeedController(QObject):
         self.hotkey = GlobalLockHotkey(self.toggle_locked)
         self.app.installNativeEventFilter(self.hotkey)
         self.hotkey.register()
+        self.wheel_capture = GlobalWheelCapture(self._route_locked_wheel)
+        self.wheel_capture.register()
 
         self._place_overlays()
         self.set_locked(self.preferences.locked, notify=False)
@@ -131,6 +133,7 @@ class CombatFeedController(QObject):
         if self.watcher:
             self.watcher.close()
         self.hotkey.unregister()
+        self.wheel_capture.unregister()
         self.tray.hide()
         self.window.allow_close()
         self.window.close()
@@ -328,6 +331,19 @@ class CombatFeedController(QObject):
     def _update_dps_displays(self) -> None:
         self.you_overlay.set_dps(self.dps_meter.snapshot("character"))
         self.pet_overlay.set_dps(self.dps_meter.snapshot("pet"))
+
+    def _route_locked_wheel(self, x: int, y: int, steps: int) -> bool:
+        """Consume hooked wheel notches over a visible locked overlay.
+
+        Unlocked overlays receive wheel events natively, so the hook leaves
+        them (and every other window on the system) alone.
+        """
+        point = QPoint(x, y)
+        for overlay in (self.you_overlay, self.pet_overlay):
+            if overlay.isVisible() and overlay.locked and overlay.frameGeometry().contains(point):
+                overlay.scroll_history(steps)
+                return True
+        return False
 
     def _set_status(self, message: str, *, error: bool = False) -> None:
         self.you_overlay.set_status(message, error=error)

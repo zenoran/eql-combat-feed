@@ -829,3 +829,52 @@ def test_hovering_the_feed_pauses_decay_and_restores_rows() -> None:
     assert overlay._hover_hold is False
     assert overlay._visible_entries() == []
     overlay.close()
+
+
+def test_scroll_history_clamps_and_requires_overflow() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(
+        OverlayPreferences(max_rows=2, history_rows=6, size=QSize(600, 300)),
+        "character",
+    )
+    overlay.add_event(event(1))
+    overlay.scroll_history(1)  # nothing to scroll: entries fit the window
+    assert overlay._history_offset == 0
+
+    for amount in range(2, 7):
+        overlay.add_event(event(amount))
+    overlay.scroll_history(2)
+    assert overlay._history_offset == 2
+    overlay.scroll_history(99)
+    assert overlay._history_offset == len(overlay.entries) - overlay._visible_row_capacity()
+    overlay.scroll_history(-99)
+    assert overlay._history_offset == 0
+    overlay.close()
+    app.processEvents()
+
+
+def test_leaving_a_locked_feed_releases_scrolled_history() -> None:
+    """Locked windows have no other affordance to exit history mode, and a
+    stale offset pins full-opacity rows forever (0.17.3)."""
+    overlay, clock = _fading_overlay(max_rows=2, size=QSize(600, 140))
+    for amount in range(1, 7):
+        overlay.add_event(event(amount))
+    overlay.set_locked(True)
+    overlay._cursor_inside_feed = lambda: True  # type: ignore[method-assign]
+    overlay.tick()
+    overlay.scroll_history(2)
+    assert overlay._history_offset == 2
+
+    overlay._cursor_inside_feed = lambda: False  # type: ignore[method-assign]
+    overlay.tick()
+    assert overlay._history_offset == 0
+
+    # Unlocked windows keep their offset on unhover (existing behavior).
+    overlay.set_locked(False)
+    overlay._cursor_inside_feed = lambda: True  # type: ignore[method-assign]
+    overlay.tick()
+    overlay.scroll_history(2)
+    overlay._cursor_inside_feed = lambda: False  # type: ignore[method-assign]
+    overlay.tick()
+    assert overlay._history_offset == 2
+    overlay.close()

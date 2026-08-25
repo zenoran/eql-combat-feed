@@ -10,6 +10,88 @@ VK_CONTROL = 0x11
 VK_MENU = 0x12
 VK_L = 0x4C
 KEY_DOWN_MASK = 0x8000
+WH_MOUSE_LL = 14
+WM_MOUSEWHEEL = 0x020A
+WHEEL_NOTCH = 120
+
+if sys.platform == "win32":
+    _HOOKPROC = ctypes.WINFUNCTYPE(
+        ctypes.c_ssize_t, ctypes.c_int, ctypes.c_size_t, ctypes.c_ssize_t
+    )
+else:  # keep the module importable for the cross-platform test suite
+    _HOOKPROC = None
+
+
+class _POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", _POINT),
+        ("mouseData", ctypes.c_ulong),
+        ("flags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class GlobalWheelCapture:
+    """Steal wheel notches over click-through overlays via a WH_MOUSE_LL hook.
+
+    Locked (``WindowTransparentForInput``) windows never receive wheel
+    events — the OS routes them straight to the game underneath, and unlike
+    cursor *position*, wheel *events* cannot be polled after the fact. A
+    low-level mouse hook sees every notch before routing. The router decides
+    whether a feed window under the cursor consumes it; returning 1 from the
+    hook blocks the game's camera zoom for that notch — and only then.
+
+    The hook is installed on the Qt main thread (Qt pumps Windows messages),
+    so the router may touch widgets directly. The callback must stay fast and
+    must never raise: a slow or crashing LL hook degrades the system mouse.
+    """
+
+    def __init__(self, router: Callable[[int, int, int], bool]) -> None:
+        self.router = router
+        self.registered = False
+        self._handle = None
+        self._proc = None
+
+    def register(self) -> bool:
+        if sys.platform != "win32":
+            return False
+        user32 = ctypes.windll.user32
+
+        @_HOOKPROC
+        def proc(n_code: int, w_param: int, l_param: int) -> int:
+            if n_code == 0 and w_param == WM_MOUSEWHEEL:
+                try:
+                    data = ctypes.cast(
+                        l_param, ctypes.POINTER(_MSLLHOOKSTRUCT)
+                    ).contents
+                    delta = ctypes.c_short((data.mouseData >> 16) & 0xFFFF).value
+                    steps = (
+                        delta // WHEEL_NOTCH
+                        if delta > 0
+                        else -(-delta // WHEEL_NOTCH)
+                    )
+                    if steps and self.router(data.pt.x, data.pt.y, steps):
+                        return 1
+                except Exception:  # noqa: BLE001 — never break the system mouse
+                    pass
+            return user32.CallNextHookEx(None, n_code, w_param, l_param)
+
+        self._proc = proc  # keep the callback alive for the hook's lifetime
+        self._handle = user32.SetWindowsHookExW(WH_MOUSE_LL, proc, None, 0)
+        self.registered = bool(self._handle)
+        return self.registered
+
+    def unregister(self) -> None:
+        if self._handle:
+            ctypes.windll.user32.UnhookWindowsHookEx(self._handle)
+        self._handle = None
+        self._proc = None
+        self.registered = False
 
 
 class GlobalLockHotkey(QAbstractNativeEventFilter):

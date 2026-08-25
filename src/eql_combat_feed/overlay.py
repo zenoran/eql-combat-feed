@@ -228,7 +228,13 @@ class CombatFeedOverlay(QWidget):
         # a global cursor poll, NOT a mouse event — locked (click-through)
         # windows receive no input events at all, but QCursor.pos() doesn't
         # care, so hover-reveal works even in locked mode.
-        self._hover_hold = self._cursor_inside_feed()
+        hovering = self._cursor_inside_feed()
+        if self._hover_hold and not hovering and self._locked and self._history_offset:
+            # Leaving a locked feed ends the peek. A locked window has no
+            # other affordance to release scrolled history, and stale offset
+            # would pin full-opacity rows on screen indefinitely.
+            self._history_offset = 0
+        self._hover_hold = hovering
         signature = tuple(
             round(self._entry_alpha(entry), 2) for entry in self._visible_entries()
         )
@@ -345,10 +351,17 @@ class CombatFeedOverlay(QWidget):
                 event.ignore()
                 return
             steps = 1 if pixel_y > 0 else -1
+        self.scroll_history(steps)
+        event.accept()
+
+    def scroll_history(self, steps: int) -> None:
+        """Shift the history view; also the entry point for hooked wheel
+        notches captured while the window is locked/click-through."""
+        if steps == 0 or len(self._entries) <= self._visible_row_capacity():
+            return
         self._history_offset += steps
         self._clamp_history_offset()
         self.update()
-        event.accept()
 
     def event(self, event) -> bool:  # type: ignore[no-untyped-def]
         if event.type() == QEvent.Type.ToolTip and not self._locked:
