@@ -518,7 +518,7 @@ def test_critical_amount_is_red_without_extra_label() -> None:
     assert CombatFeedOverlay._source_parts(critical, "character") == ("", "⚔")
 
 
-def test_critical_rows_use_impact_font_for_number() -> None:
+def test_critical_rows_are_taller_with_bigger_text() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = CombatFeedOverlay(OverlayPreferences(), "character")
     plain = event(123, EventKind.SPELL, ability="Ice Comet")
@@ -534,9 +534,21 @@ def test_critical_rows_use_impact_font_for_number() -> None:
 
     _, plain_amount_font = overlay._entry_value_fonts(plain)
     _, crit_amount_font = overlay._entry_value_fonts(crit)
-    assert plain_amount_font.family() == "Segoe UI"
-    assert crit_amount_font.family() == "Impact"
+    assert crit_amount_font.family() == plain_amount_font.family() == "Segoe UI"
     assert crit_amount_font.pointSizeF() > plain_amount_font.pointSizeF()
+    assert overlay._entry_height(crit) == pytest.approx(overlay._entry_height(plain) * 1.6)
+
+    # MISS crits stay ordinary rows.
+    miss = CombatEvent(
+        timestamp=plain.timestamp,
+        kind=EventKind.MISS,
+        amount=0,
+        ability="Melee",
+        target=plain.target,
+        critical=True,
+        source=plain.source,
+    )
+    assert overlay._entry_height(miss) == pytest.approx(overlay._entry_height(plain))
 
     overlay.close()
     app.processEvents()

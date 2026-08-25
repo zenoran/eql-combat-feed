@@ -39,13 +39,14 @@ HEADER_BACKDROP_COLOR = QColor(4, 7, 10, 210)
 HEADER_DPS_BACKDROP_COLOR = QColor(0, 0, 0, 175)
 BACKDROP_COLOR = QColor(0, 0, 0, 190)
 HIT_SURFACE_COLOR = QColor(0, 0, 0, 1)
-# Crits get comic-book treatment: Impact (condensed, heavy, ships with
-# Windows) in fire colors, a ✸ burst icon, and an orange glow ring drawn
-# between the black outline and the fill so the row visibly detonates.
-CRIT_FONT_FAMILY = "Impact"
+# Crits explode the row: 1.6x row height, a ✸ burst icon, and clearly
+# bigger/heavier text in fire colors. No exotic font, no glow ring — both
+# were tried (0.15.2/0.15.3) and read worse at combat glance-speed than
+# plain Segoe UI Black scaled up.
 CRIT_LABEL_COLOR = QColor("#ffe14a")
-CRIT_GLOW_COLOR = QColor("#ff7300")
+CRIT_ICON_COLOR = QColor("#ff7300")
 CRIT_ICON = "✸"
+CRIT_ROW_SCALE = 1.6
 SOURCE_COLORS = {
     EventKind.MELEE: QColor("#ffff00"),
     EventKind.SKILL: QColor("#ff9d00"),
@@ -329,10 +330,31 @@ class CombatFeedOverlay(QWidget):
             return "character"
         return None
 
+    def _is_crit_row(self, event: CombatEvent) -> bool:
+        return event.critical and event.kind is not EventKind.MISS
+
+    def _entry_height(self, event: CombatEvent) -> float:
+        scale = CRIT_ROW_SCALE if self._is_crit_row(event) else 1.0
+        return self._row_height() * scale
+
     def _visible_entries(self) -> list[DisplayEntry]:
+        # Crit rows are taller, so visibility is a height budget rather than a
+        # fixed row count: walk backwards from the newest visible entry until
+        # the window (or the row cap) is full.
         end = len(self._entries) - self._history_offset
-        start = max(0, end - self._visible_row_capacity())
-        return self._entries[start:end]
+        available = max(0.0, self.height() - self._content_top() - self.PADDING)
+        picked: list[DisplayEntry] = []
+        used = 0.0
+        for entry in reversed(self._entries[:end]):
+            height = self._entry_height(entry.event)
+            if picked and (
+                used + height > available or len(picked) >= self.preferences.max_rows
+            ):
+                break
+            picked.append(entry)
+            used += height
+        picked.reverse()
+        return picked
 
     def _clamp_history_offset(self) -> None:
         maximum = max(0, len(self._entries) - self._visible_row_capacity())
@@ -374,11 +396,15 @@ class CombatFeedOverlay(QWidget):
         )
 
     def _entry_at(self, point: QPointF) -> DisplayEntry | None:
-        index = int((point.y() - self._content_top()) // self._row_height())
-        if index < 0:
+        y = self._content_top()
+        if point.y() < y:
             return None
-        visible = self._visible_entries()
-        return visible[index] if index < len(visible) else None
+        for entry in self._visible_entries():
+            height = self._entry_height(entry.event)
+            if y <= point.y() < y + height:
+                return entry
+            y += height
+        return None
 
     def _minimum_height(self) -> float:
         return self._content_top() + self.PADDING + self._row_height()
@@ -648,32 +674,25 @@ class CombatFeedOverlay(QWidget):
 
     def _paint_feed(self, painter: QPainter) -> None:
         content = self._content_rect()
-        for index, entry in enumerate(self._visible_entries()):
-            rect = QRectF(
-                content.left(),
-                self._content_top() + index * self._row_height(),
-                content.width(),
-                self._row_height(),
-            )
+        y = self._content_top()
+        for entry in self._visible_entries():
+            height = self._entry_height(entry.event)
+            rect = QRectF(content.left(), y, content.width(), height)
             self._paint_entry(painter, rect, entry.event)
+            y += height
 
     def _paint_entry(self, painter: QPainter, rect: QRectF, event: CombatEvent) -> None:
-        crit = event.critical and event.kind is not EventKind.MISS
+        crit = self._is_crit_row(event)
         description, icon = self._source_parts(event, self.actor)
         if crit:
             icon = CRIT_ICON
         label_color = CRIT_LABEL_COLOR if crit else SOURCE_COLORS[event.kind]
-        icon_color = CRIT_GLOW_COLOR if crit else label_color
+        icon_color = CRIT_ICON_COLOR if crit else label_color
         amount_color = self._amount_color(event, self.actor)
         amount_text = "MISS" if event.kind is EventKind.MISS else f"{event.amount:,}"
         description_rect, icon_rect, amount_rect = self._entry_rects(rect)
-        draw_backed = self._draw_crit_backed_text if crit else self._draw_backed_outlined_text
 
-        if crit:
-            # Impact carries its own weight; Black would distort its metrics.
-            description_font = self._font(CRIT_FONT_FAMILY, 13, QFont.Weight.Normal)
-        else:
-            description_font = self._font("Segoe UI", 12, QFont.Weight.Black)
+        description_font = self._font("Segoe UI", 15 if crit else 12, QFont.Weight.Black)
         painter.setFont(description_font)
         description = painter.fontMetrics().elidedText(
             description,
@@ -681,7 +700,7 @@ class CombatFeedOverlay(QWidget):
             max(20, round(description_rect.width())),
         )
         if description:
-            draw_backed(
+            self._draw_backed_outlined_text(
                 painter,
                 description_rect,
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
@@ -699,7 +718,7 @@ class CombatFeedOverlay(QWidget):
             icon_color,
             icon_font,
         )
-        draw_backed(
+        self._draw_backed_outlined_text(
             painter,
             amount_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
@@ -709,13 +728,18 @@ class CombatFeedOverlay(QWidget):
         )
 
     def _entry_value_fonts(self, event: CombatEvent) -> tuple[QFont, QFont]:
+        if self._is_crit_row(event):
+            # The crit row is CRIT_ROW_SCALE taller, so the number scales up
+            # with it: clearly bigger, same heavy readable face as normal rows.
+            return (
+                self._font("Segoe UI Symbol", 22, QFont.Weight.Black),
+                self._font("Segoe UI", 28, QFont.Weight.Black),
+            )
         scale = self.MISS_SCALE if event.kind is EventKind.MISS else 1.0
-        icon_font = self._font("Segoe UI Symbol", 17 * scale, QFont.Weight.Black)
-        if event.critical:
-            # Larger is safe: Impact is condensed, so the number still fits
-            # the fixed amount lane measured against Segoe UI Black.
-            return icon_font, self._font(CRIT_FONT_FAMILY, 24 * scale, QFont.Weight.Normal)
-        return icon_font, self._font("Segoe UI", 21 * scale, QFont.Weight.Black)
+        return (
+            self._font("Segoe UI Symbol", 17 * scale, QFont.Weight.Black),
+            self._font("Segoe UI", 21 * scale, QFont.Weight.Black),
+        )
 
     def _amount_lane_width(self) -> float:
         amount_font = self._font("Segoe UI", 21, QFont.Weight.Black)
@@ -850,37 +874,6 @@ class CombatFeedOverlay(QWidget):
         path.addRoundedRect(cls._text_backdrop_rect(rect, alignment, text, font), 3, 3)
         painter.fillPath(path, BACKDROP_COLOR)
         cls._draw_outlined_text(painter, rect, alignment, text, color, font)
-
-    @classmethod
-    def _draw_crit_backed_text(
-        cls,
-        painter: QPainter,
-        rect: QRectF,
-        alignment: Qt.AlignmentFlag,
-        text: str,
-        color: QColor,
-        font: QFont,
-    ) -> None:
-        path = QPainterPath()
-        path.addRoundedRect(cls._text_backdrop_rect(rect, alignment, text, font), 3, 3)
-        painter.fillPath(path, BACKDROP_COLOR)
-        cls._draw_outlined_text(painter, rect, alignment, text, color, font)
-        # Orange glow ring between the black outline and the fill: re-stamp the
-        # text at tight offsets, then repaint the fill on top.
-        painter.setPen(CRIT_GLOW_COLOR)
-        for dx, dy in (
-            (-1.6, 0.0),
-            (1.6, 0.0),
-            (0.0, -1.6),
-            (0.0, 1.6),
-            (-1.2, -1.2),
-            (1.2, -1.2),
-            (-1.2, 1.2),
-            (1.2, 1.2),
-        ):
-            painter.drawText(rect.translated(dx, dy), alignment, text)
-        painter.setPen(color)
-        painter.drawText(rect, alignment, text)
 
     @staticmethod
     def _draw_outlined_text(
