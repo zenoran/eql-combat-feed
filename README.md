@@ -57,6 +57,22 @@ It installs per-user by default, adds **EQL Combat Feed** to the Start Menu, reg
 a normal Windows uninstall entry, and offers optional Desktop and login-startup
 shortcuts.
 
+### Enable combat logging and immediate updates
+
+After installing, enter these commands in EverQuest:
+
+```text
+/log on
+/loginterval 0
+```
+
+`/log on` creates and enables the combat log that the overlay reads. EverQuest
+normally buffers writes for roughly one second; `/loginterval 0` makes each line
+available immediately. Both settings persist after restarting the game.
+
+If immediate logging causes combat stutter on your system, restore the default
+one-second buffering with `/loginterval 1`.
+
 > The installer is not code-signed yet, so Windows SmartScreen may show an
 > "unrecognized app" warning. Verify that the download came from this repository.
 

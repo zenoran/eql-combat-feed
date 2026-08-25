@@ -16,7 +16,9 @@ QSize = qt_core.QSize
 Qt = qt_core.Qt
 QTest = qt_test.QTest
 
-CombatFeedController = importlib.import_module("eql_combat_feed.controller").CombatFeedController
+controller_module = importlib.import_module("eql_combat_feed.controller")
+CombatFeedController = controller_module.CombatFeedController
+LOG_POLL_INTERVAL_MS = controller_module.LOG_POLL_INTERVAL_MS
 SettingsStore = importlib.import_module("eql_combat_feed.settings").SettingsStore
 
 
@@ -32,6 +34,16 @@ def make_controller(tmp_path: Path, *, show_pet: bool = True):
     controller = CombatFeedController(app, requested_log=str(log), settings=settings)
     app.processEvents()
     return app, log, settings, controller
+
+
+def test_log_poll_timer_uses_low_latency_precise_cadence(tmp_path: Path) -> None:
+    _, _, _, controller = make_controller(tmp_path)
+
+    assert controller.poll_timer.interval() == LOG_POLL_INTERVAL_MS == 50
+    assert controller.poll_timer.timerType() == Qt.TimerType.PreciseTimer
+    assert controller.POLL_FAILURE_REOPEN_THRESHOLD == 20
+
+    stop_controller(controller)
 
 
 def test_control_window_is_visible_before_deferred_log_startup(tmp_path: Path) -> None:
@@ -291,9 +303,11 @@ def test_poll_log_survives_transient_read_errors_and_recovers(tmp_path: Path) ->
     """A burst of OSErrors (AV scan / recording lock) must never kill the feed."""
     app, _, _, controller = make_controller(tmp_path)
 
+    threshold = controller.POLL_FAILURE_REOPEN_THRESHOLD
+
     class FlakyWatcher:
         def __init__(self) -> None:
-            self.failures_left = 10
+            self.failures_left = threshold
             self.closes = 0
             self.polls = 0
 
@@ -311,11 +325,11 @@ def test_poll_log_survives_transient_read_errors_and_recovers(tmp_path: Path) ->
     controller.watcher = flaky  # type: ignore[assignment]
     controller.poll_timer.start()
 
-    for _ in range(10):
+    for _ in range(threshold):
         controller._poll_log()
     assert controller.poll_timer.isActive()  # never permanently stopped
-    assert flaky.closes >= 1  # forced a clean reopen after sustained failure
-    assert controller._poll_failures == 10
+    assert flaky.closes >= 1  # forced a clean reopen after ~1s of sustained failure
+    assert controller._poll_failures == threshold
 
     controller._poll_log()  # first success
     assert controller._poll_failures == 0

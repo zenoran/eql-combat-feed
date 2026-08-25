@@ -75,16 +75,29 @@ def test_inactivity_finalizes_result_and_next_hit_starts_fresh() -> None:
     assert fresh.active is True
 
 
-def test_kill_finalizes_without_erasing_completed_result() -> None:
-    meter = EncounterDpsMeter()
+def test_kill_does_not_end_multi_target_encounter() -> None:
+    meter = EncounterDpsMeter(inactivity_seconds=10.0)
     meter.add(damage(100.0, 180), observed_at=1.0)
-    kill = CombatEvent(timestamp=101.0, kind=EventKind.KILL, target="a gargoyle")
+    first_kill = CombatEvent(timestamp=101.0, kind=EventKind.KILL, target="a gargoyle")
 
-    assert meter.add(kill, observed_at=2.0) is True
-    snapshot = meter.snapshot("character")
-    assert snapshot.damage == 180
-    assert snapshot.dps == pytest.approx(180.0)
-    assert snapshot.active is False
+    assert meter.add(first_kill, observed_at=2.0) is False
+    after_first_kill = meter.snapshot("character")
+    assert after_first_kill.damage == 180
+    assert after_first_kill.dps == pytest.approx(180.0)
+    assert after_first_kill.active is True
+
+    meter.add(damage(102.0, 220, EventKind.SPELL), observed_at=3.0)
+    second_kill = CombatEvent(timestamp=102.0, kind=EventKind.KILL, target="another gargoyle")
+    assert meter.add(second_kill, observed_at=3.1) is False
+
+    combined = meter.snapshot("character")
+    assert combined.damage == 400
+    assert combined.duration == 3.0
+    assert combined.dps == pytest.approx(400 / 3)
+    assert combined.active is True
+
+    assert meter.tick(13.01) is True
+    assert meter.snapshot("character").active is False
 
 
 def test_out_of_order_damage_extends_start_without_negative_duration() -> None:

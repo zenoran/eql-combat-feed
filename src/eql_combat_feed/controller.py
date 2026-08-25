@@ -29,6 +29,9 @@ from .window import ControlWindow
 
 LOG = logging.getLogger(__name__)
 
+LOG_POLL_INTERVAL_MS = 50
+POLL_FAILURE_REOPEN_SECONDS = 1.0
+
 
 class CombatFeedController(QObject):
     def __init__(
@@ -80,7 +83,8 @@ class CombatFeedController(QObject):
         self._connect_overlay(self.pet_overlay, "pet")
 
         self.poll_timer = QTimer(self)
-        self.poll_timer.setInterval(150)
+        self.poll_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.poll_timer.setInterval(LOG_POLL_INTERVAL_MS)
         self.poll_timer.timeout.connect(self._poll_log)
         self.animation_timer = QTimer(self)
         self.animation_timer.setInterval(50)
@@ -363,8 +367,10 @@ class CombatFeedController(QObject):
         except OSError:
             LOG.exception("Unable to scan recent log for pet identity")
 
-    # ~1s of consecutive 150ms-poll failures before surfacing and reopening.
-    POLL_FAILURE_REOPEN_THRESHOLD = 7
+    # Keep read-error recovery near one second even if the poll cadence changes.
+    POLL_FAILURE_REOPEN_THRESHOLD = round(
+        POLL_FAILURE_REOPEN_SECONDS * 1000 / LOG_POLL_INTERVAL_MS
+    )
 
     def _poll_log(self) -> None:
         """Poll the log, riding out transient read errors instead of dying.

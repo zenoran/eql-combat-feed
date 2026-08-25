@@ -34,8 +34,9 @@ class EncounterDpsMeter:
 
     EverQuest log timestamps resolve to one second. Encounter duration therefore
     includes both endpoint seconds: hits at 10:00:00 and 10:00:04 span five
-    logged combat seconds. A kill or a configurable damage lull finalizes the
-    encounter; the completed result remains available until the next pull.
+    logged combat seconds. A configurable damage lull finalizes the encounter;
+    kill lines do not, because an AoE pull can keep dealing damage after one of
+    several targets dies. The completed result remains available until the next pull.
     """
 
     def __init__(self, inactivity_seconds: float = 10.0) -> None:
@@ -55,7 +56,9 @@ class EncounterDpsMeter:
     def add(self, event: CombatEvent, observed_at: float) -> bool:
         """Consume an event and return whether the displayed DPS changed."""
         if event.kind is EventKind.KILL:
-            return self.finalize()
+            # One corpse is not necessarily the end of the pull. AoE damage and
+            # multi-target fights commonly continue after an intervening kill.
+            return False
 
         actor = self._damage_actor(event)
         if actor is None:
