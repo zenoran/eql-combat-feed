@@ -494,9 +494,9 @@ def test_miss_text_and_icon_are_smaller_without_changing_hit_sizes() -> None:
     miss_icon, miss_amount = overlay._entry_value_fonts(miss)
     hit_icon, hit_amount = overlay._entry_value_fonts(hit)
 
-    assert overlay.MISS_SCALE == 0.75
-    assert miss_icon.pointSizeF() == pytest.approx(hit_icon.pointSizeF() * 0.75)
-    assert miss_amount.pointSizeF() == pytest.approx(hit_amount.pointSizeF() * 0.75)
+    assert overlay.MISS_SCALE == 0.62
+    assert miss_icon.pointSizeF() == pytest.approx(hit_icon.pointSizeF() * 0.62)
+    assert miss_amount.pointSizeF() == pytest.approx(hit_amount.pointSizeF() * 0.62)
 
     overlay.close()
     app.processEvents()
@@ -549,7 +549,10 @@ def test_critical_rows_keep_normal_pitch_with_bigger_text() -> None:
         critical=True,
         source=plain.source,
     )
-    assert overlay._entry_height(miss) == pytest.approx(overlay._entry_height(plain))
+    # MISS crits are status rows: compact pitch, never crit-sized (0.17.1).
+    assert overlay._entry_height(miss) == pytest.approx(
+        overlay._entry_height(plain) * overlay.STATUS_ROW_SCALE
+    )
 
     overlay.close()
     app.processEvents()
@@ -737,8 +740,10 @@ def test_resist_rows_render_smaller_with_spell_name_and_resist_text() -> None:
         hit_font.pointSizeF() * overlay.MISS_SCALE
     )
 
-    # Resist rows are never crit rows and never grow.
-    assert overlay._entry_height(resist) == pytest.approx(overlay._row_height())
+    # Resist rows are compact status rows: shorter pitch, never crit-sized.
+    assert overlay._entry_height(resist) == pytest.approx(
+        overlay._row_height() * overlay.STATUS_ROW_SCALE
+    )
 
     overlay.close()
     app.processEvents()
@@ -770,3 +775,34 @@ def test_offscreen_history_fading_does_not_trigger_repaints() -> None:
     overlay.tick()
     assert len(updates) == baseline + 1
     overlay.close()
+
+
+def test_status_rows_are_shorter_and_darker_than_hit_rows() -> None:
+    """Misses and resists conserve vertical space and brightness: compact row
+    pitch, smaller text, dim colors — only the fun stuff stays big (0.17.1)."""
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(), "character")
+    miss = event(0, EventKind.MISS)
+    resist = CombatEvent(
+        timestamp=1.0,
+        kind=EventKind.RESIST,
+        ability="Selo's Chords of Cessation",
+        target="an abhorrent",
+        source="You",
+    )
+    hit = event(123, EventKind.MELEE)
+
+    for status in (miss, resist):
+        assert overlay._entry_height(status) == pytest.approx(
+            overlay._entry_height(hit) * overlay.STATUS_ROW_SCALE
+        )
+
+    # Dim, not bright: status colors stay well below full-brightness lanes.
+    miss_color = CombatFeedOverlay._amount_color(miss, "character")
+    resist_color = CombatFeedOverlay._amount_color(resist, "character")
+    hit_color = CombatFeedOverlay._amount_color(hit, "character")
+    assert miss_color.value() < 180 < hit_color.value()
+    assert resist_color.value() < 150 < hit_color.value()
+
+    overlay.close()
+    app.processEvents()

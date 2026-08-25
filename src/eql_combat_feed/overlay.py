@@ -63,10 +63,10 @@ SOURCE_COLORS = {
     EventKind.SPELL: QColor("#ff3dff"),
     EventKind.PROC: QColor("#8b7dff"),
     EventKind.PET: QColor("#00ffff"),
-    EventKind.MISS: QColor("#ffffff"),
-    # Resisted spells read as a muted echo of the spell color: present in the
-    # lane so failed slows/nukes are visible, but never louder than a landed hit.
-    EventKind.RESIST: QColor("#c88bc8"),
+    # Status rows (miss/resist) are deliberately dim: informative on a second
+    # glance, invisible on the first. The fun stuff gets the brightness budget.
+    EventKind.MISS: QColor("#9a9a9a"),
+    EventKind.RESIST: QColor("#8a5f8a"),
 }
 CHARACTER_DAMAGE_KINDS = frozenset(
     {
@@ -102,7 +102,11 @@ class CombatFeedOverlay(QWidget):
     AMOUNT_TEMPLATE = "888,888"
     DPS_TEMPLATE = "99,999 DPS"
     MIN_DESCRIPTION_WIDTH = 24.0
-    MISS_SCALE = 0.75
+    # Miss/resist rows: smaller text in a shorter row, conserving vertical
+    # space for hits. STATUS_ROW_SCALE shrinks the row pitch; MISS_SCALE
+    # shrinks the text inside it.
+    MISS_SCALE = 0.62
+    STATUS_ROW_SCALE = 0.72
     HEADER_FONT_BASE = 16.8
     HEADER_ACTOR_GAP = 12.0
     HEADER_DPS_GAP = 8.0
@@ -382,9 +386,16 @@ class CombatFeedOverlay(QWidget):
     def _is_crit_row(self, event: CombatEvent) -> bool:
         return event.critical and event.kind is not EventKind.MISS
 
+    @staticmethod
+    def _is_status_row(event: CombatEvent) -> bool:
+        return event.kind in (EventKind.MISS, EventKind.RESIST)
+
     def _entry_height(self, event: CombatEvent) -> float:
-        scale = CRIT_ROW_SCALE if self._is_crit_row(event) else 1.0
-        return self._row_height() * scale
+        if self._is_crit_row(event):
+            return self._row_height() * CRIT_ROW_SCALE
+        if self._is_status_row(event):
+            return self._row_height() * self.STATUS_ROW_SCALE
+        return self._row_height()
 
     def _visible_entries(self) -> list[DisplayEntry]:
         # Crit rows are taller, so visibility is a height budget rather than a
@@ -752,7 +763,13 @@ class CombatFeedOverlay(QWidget):
             amount_text = f"{event.amount:,}"
         description_rect, icon_rect, amount_rect = self._entry_rects(rect)
 
-        description_font = self._font("Segoe UI", 15 if crit else 12, QFont.Weight.Black)
+        if crit:
+            description_size = 15
+        elif self._is_status_row(event):
+            description_size = 9
+        else:
+            description_size = 12
+        description_font = self._font("Segoe UI", description_size, QFont.Weight.Black)
         painter.setFont(description_font)
         description = painter.fontMetrics().elidedText(
             description,
@@ -795,11 +812,7 @@ class CombatFeedOverlay(QWidget):
                 self._font("Segoe UI Symbol", 22, QFont.Weight.Black),
                 self._font("Segoe UI", 28, QFont.Weight.Black),
             )
-        scale = (
-            self.MISS_SCALE
-            if event.kind in (EventKind.MISS, EventKind.RESIST)
-            else 1.0
-        )
+        scale = self.MISS_SCALE if self._is_status_row(event) else 1.0
         return (
             self._font("Segoe UI Symbol", 17 * scale, QFont.Weight.Black),
             self._font("Segoe UI", 21 * scale, QFont.Weight.Black),
@@ -867,9 +880,9 @@ class CombatFeedOverlay(QWidget):
         if event.critical:
             return QColor("#ff2020")
         if event.kind is EventKind.RESIST:
-            return QColor("#c88bc8")
+            return QColor("#8a5f8a")
         if event.kind is EventKind.MISS:
-            return QColor("#ffffff")
+            return QColor("#9a9a9a")
         return CHARACTER_AMOUNT if actor == "character" else PET_AMOUNT
 
     def _paint_title_button(
