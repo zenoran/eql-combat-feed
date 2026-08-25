@@ -73,6 +73,12 @@ class OptionsDialog(QDialog):
         self.show_pet = QCheckBox("Show separate Pet damage window")
         self.show_pet.setChecked(preferences.show_pet)
 
+        self.mirror_character = QCheckBox("Mirror YOU feed (numbers on the left)")
+        self.mirror_character.setChecked(preferences.mirror_character)
+
+        self.mirror_pet = QCheckBox("Mirror PET feed (numbers on the left)")
+        self.mirror_pet.setChecked(preferences.mirror_pet)
+
         self.auto_quit_with_game = QCheckBox("Automatically quit when EverQuest closes")
         self.auto_quit_with_game.setChecked(preferences.auto_quit_with_game)
 
@@ -109,6 +115,8 @@ class OptionsDialog(QDialog):
         form.addRow("Fade rows after", self.fade_delay)
         form.addRow("Spell resists", self.show_resists)
         form.addRow("Pet feed", self.show_pet)
+        form.addRow("YOU layout", self.mirror_character)
+        form.addRow("PET layout", self.mirror_pet)
         form.addRow("Game exit", self.auto_quit_with_game)
         form.addRow("Close button", self.minimize_to_tray)
         form.addRow("Focus", self.hide_when_unfocused)
@@ -119,7 +127,9 @@ class OptionsDialog(QDialog):
         hint = QLabel(
             "YOU and PET are independently movable/resizable windows. Damage and header "
             "text sizes are independent point sizes. Resize either window for more name room; "
-            "hover a top edge for controls.\nLocked: mouse input passes through; "
+            "hover a top edge for controls.\nMirror a feed to put its numbers on the left — "
+            "an unmirrored feed beside a mirrored one forms one number column in the middle "
+            "with descriptions growing outward.\nLocked: mouse input passes through; "
             "Ctrl+Alt+L always unlocks."
         )
         hint.setWordWrap(True)
@@ -150,6 +160,8 @@ class OptionsDialog(QDialog):
             fade_delay=self.fade_delay.value(),
             show_resists=self.show_resists.isChecked(),
             show_pet=self.show_pet.isChecked(),
+            mirror_character=self.mirror_character.isChecked(),
+            mirror_pet=self.mirror_pet.isChecked(),
             auto_quit_with_game=self.auto_quit_with_game.isChecked(),
             minimize_to_tray=self.minimize_to_tray.isChecked(),
             hide_when_unfocused=self.hide_when_unfocused.isChecked(),
@@ -185,6 +197,8 @@ class OptionsDialog(QDialog):
         self.fade_delay.setValue(defaults.fade_delay)
         self.show_resists.setChecked(defaults.show_resists)
         self.show_pet.setChecked(defaults.show_pet)
+        self.mirror_character.setChecked(defaults.mirror_character)
+        self.mirror_pet.setChecked(defaults.mirror_pet)
         self.auto_quit_with_game.setChecked(defaults.auto_quit_with_game)
         self.minimize_to_tray.setChecked(defaults.minimize_to_tray)
         self.hide_when_unfocused.setChecked(defaults.hide_when_unfocused)

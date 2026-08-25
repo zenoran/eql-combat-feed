@@ -194,7 +194,12 @@ def test_icon_has_no_backdrop_while_text_backdrop_has_two_vertical_pixels() -> N
 def test_header_cluster_is_spaced_and_right_anchored() -> None:
     app = QApplication.instance() or QApplication([])
     for actor in ("character", "pet"):
-        overlay = CombatFeedOverlay(OverlayPreferences(size=QSize(772, 400)), actor)
+        # mirror_pet=False: this pins the UNMIRRORED cluster for both actors;
+        # the mirrored reflection has its own test below.
+        overlay = CombatFeedOverlay(
+            OverlayPreferences(size=QSize(772, 400), pet_size=QSize(772, 400), mirror_pet=False),
+            actor,
+        )
         overlay.set_dps(DpsSnapshot(damage=1234, duration=10.0, active=True))
         actor_rect, marker_rect, dps_rect = overlay._header_rects()
         dps_text = overlay._format_dps(overlay._dps.dps)
@@ -407,9 +412,11 @@ def test_window_width_and_font_size_remain_independent() -> None:
 
 
 def test_extra_width_grows_descriptions_not_the_amount_lane() -> None:
-    """Widening the window must not pile empty space right of the numbers."""
+    """Widening the window must not pile empty space beside the numbers —
+    in either direction. The pet feed is mirrored by default, so its amount
+    lane hugs the LEFT edge; the character feed keeps hugging the right."""
     app = QApplication.instance() or QApplication([])
-    overlay = CombatFeedOverlay(OverlayPreferences(size=QSize(400, 420)), "pet")
+    overlay = CombatFeedOverlay(OverlayPreferences(pet_size=QSize(400, 420)), "pet")
     _, _, narrow_amount = overlay._entry_rects(row_rect(overlay))
 
     overlay.resize(900, 420)
@@ -417,14 +424,22 @@ def test_extra_width_grows_descriptions_not_the_amount_lane() -> None:
 
     # Amount lane is fixed-width — damage text has a known ceiling.
     assert wide_amount.width() == pytest.approx(narrow_amount.width())
-    # The lane hugs the right edge instead of starting at the window's center.
-    assert wide_amount.right() == pytest.approx(row_rect(overlay).right())
-    assert wide_icon.center().x() > overlay.width() / 2
+    # Mirrored: the lane hugs the left edge; extra width all goes rightward
+    # into the description lane.
+    assert wide_amount.left() == pytest.approx(row_rect(overlay).left())
+    assert wide_icon.center().x() < overlay.width() / 2
     # And it fits the worst-case damage template at the current scale.
     amount_font = overlay._font("Segoe UI", 21, QFont.Weight.Black)
     assert wide_amount.width() >= QFontMetricsF(amount_font).horizontalAdvance("888,888") + 6
 
+    unmirrored = CombatFeedOverlay(
+        OverlayPreferences(size=QSize(900, 420), mirror_character=False), "character"
+    )
+    _, _, right_amount = unmirrored._entry_rects(row_rect(unmirrored))
+    assert right_amount.right() == pytest.approx(row_rect(unmirrored).right())
+
     overlay.close()
+    unmirrored.close()
     app.processEvents()
 
 
@@ -911,4 +926,74 @@ def test_visual_gap_between_rows_is_constant_across_all_row_types() -> None:
         == overlay._entry_height(resist)
     )
     overlay.close()
+    app.processEvents()
+
+
+def test_mirrored_feed_reverses_lanes_around_a_symmetric_spine() -> None:
+    """Mirrored layout is amount | icon | description with the spine anchored
+    left — the exact reflection of the default — so an unmirrored YOU beside a
+    mirrored PET forms one shared number column at the seam."""
+    app = QApplication.instance() or QApplication([])
+    size = QSize(772, 400)
+    preferences = OverlayPreferences(size=size, pet_size=size)
+    you = CombatFeedOverlay(preferences, "character")
+    pet = CombatFeedOverlay(preferences, "pet")
+
+    # Defaults: YOU keeps numbers on the right, PET mirrors them to the left.
+    assert you.mirrored is False
+    assert pet.mirrored is True
+
+    you_description, you_icon, you_amount = you._entry_rects(row_rect(you))
+    pet_description, pet_icon, pet_amount = pet._entry_rects(row_rect(pet))
+    assert you_description.right() < you_icon.left() < you_icon.right() < you_amount.left()
+    assert pet_amount.right() < pet_icon.left() < pet_icon.right() < pet_description.left()
+    # Equal-width windows put both spines equidistant from the shared edge.
+    assert you.width() - you_icon.center().x() == pytest.approx(pet_icon.center().x())
+    # Amount lanes stay fixed-width; extra window width is description room.
+    assert you_amount.width() == pytest.approx(pet_amount.width())
+
+    # Text hugs the spine from its own side: amounts and descriptions flip
+    # horizontal alignment, and descriptions elide at their outer end.
+    assert you._amount_alignment() & Qt.AlignmentFlag.AlignLeft
+    assert pet._amount_alignment() & Qt.AlignmentFlag.AlignRight
+    assert you._description_alignment() & Qt.AlignmentFlag.AlignRight
+    assert pet._description_alignment() & Qt.AlignmentFlag.AlignLeft
+
+    you.close()
+    pet.close()
+    app.processEvents()
+
+
+def test_mirrored_header_anchors_the_cluster_left_with_dps_at_the_seam() -> None:
+    app = QApplication.instance() or QApplication([])
+    size = QSize(772, 400)
+    overlay = CombatFeedOverlay(OverlayPreferences(size=size, pet_size=size), "pet")
+    overlay.set_dps(DpsSnapshot(damage=1234, duration=10.0, active=True))
+
+    actor_rect, marker_rect, dps_rect = overlay._header_rects()
+    # Reflection of the unmirrored [ACTOR][marker][DPS]-anchored-right cluster:
+    # [DPS][marker][ACTOR] anchored to the left outline-safe edge.
+    assert dps_rect.left() == pytest.approx(3)
+    assert dps_rect.right() < marker_rect.left() < marker_rect.right() < actor_rect.left()
+    assert marker_rect.left() - dps_rect.right() >= 5
+    assert actor_rect.left() - marker_rect.right() >= 8
+
+    overlay.close()
+    app.processEvents()
+
+
+def test_mirror_preferences_are_per_window_and_optional() -> None:
+    app = QApplication.instance() or QApplication([])
+    preferences = OverlayPreferences(mirror_character=True, mirror_pet=False)
+    you = CombatFeedOverlay(preferences, "character")
+    pet = CombatFeedOverlay(preferences, "pet")
+
+    assert you.mirrored is True
+    assert pet.mirrored is False
+    # An unmirrored PET lays out exactly like the default YOU window.
+    pet_description, pet_icon, pet_amount = pet._entry_rects(row_rect(pet))
+    assert pet_description.right() < pet_icon.left() < pet_icon.right() < pet_amount.left()
+
+    you.close()
+    pet.close()
     app.processEvents()

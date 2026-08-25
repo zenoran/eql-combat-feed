@@ -159,6 +159,16 @@ class CombatFeedOverlay(QWidget):
         return self.preferences.damage_font_size / 21.0
 
     @property
+    def mirrored(self) -> bool:
+        # Mirrored feeds run amount → icon → description (numbers on the
+        # left, text growing rightward) so a mirrored window parked beside an
+        # unmirrored one forms one shared number column in the middle with
+        # variable-length descriptions flaring outward on both sides.
+        if self.actor == "pet":
+            return self.preferences.mirror_pet
+        return self.preferences.mirror_character
+
+    @property
     def header_scale(self) -> float:
         return self.preferences.header_font_size / self.HEADER_FONT_BASE
 
@@ -641,7 +651,7 @@ class CombatFeedOverlay(QWidget):
         self._draw_outlined_text(
             painter,
             actor_rect,
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            self._header_actor_alignment(),
             actor,
             accent,
             actor_font,
@@ -650,11 +660,25 @@ class CombatFeedOverlay(QWidget):
             self._draw_outlined_text(
                 painter,
                 dps_rect,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self._header_dps_alignment(),
                 self._format_dps(self._dps.dps),
                 DPS_COLOR,
                 dps_font,
             )
+
+    def _header_actor_alignment(self) -> Qt.AlignmentFlag:
+        # Both header texts hug the marker between them, from whichever side
+        # the mirror puts them on.
+        horizontal = (
+            Qt.AlignmentFlag.AlignLeft if self.mirrored else Qt.AlignmentFlag.AlignRight
+        )
+        return horizontal | Qt.AlignmentFlag.AlignVCenter
+
+    def _header_dps_alignment(self) -> Qt.AlignmentFlag:
+        horizontal = (
+            Qt.AlignmentFlag.AlignRight if self.mirrored else Qt.AlignmentFlag.AlignLeft
+        )
+        return horizontal | Qt.AlignmentFlag.AlignVCenter
 
     @staticmethod
     def _header_divider_y(background_rect: QRectF) -> float:
@@ -672,7 +696,7 @@ class CombatFeedOverlay(QWidget):
         actor = "YOU" if self.actor == "character" else "PET"
         actor_bounds = self._text_backdrop_rect(
             actor_rect,
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            self._header_actor_alignment(),
             actor,
             actor_font,
         )
@@ -680,7 +704,7 @@ class CombatFeedOverlay(QWidget):
         if self._dps.duration > 0:
             dps_bounds = self._text_backdrop_rect(
                 dps_rect,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self._header_dps_alignment(),
                 self._format_dps(self._dps.dps),
                 dps_font,
             )
@@ -741,6 +765,26 @@ class CombatFeedOverlay(QWidget):
         actor_gap = max(8.0, self.HEADER_ACTOR_GAP * self.header_scale)
         dps_gap = max(5.0, self.HEADER_DPS_GAP * self.header_scale)
         cluster_width = actor_width + actor_gap + marker_width + dps_gap + dps_width
+        if self.mirrored:
+            # Mirror image of the cluster below: [DPS][marker][ACTOR] anchored
+            # to the LEFT edge, so a mirrored feed beside an unmirrored one
+            # puts both DPS readouts against the shared center seam.
+            outline_safe_left = 3.0
+            cluster_left = min(outline_safe_left, row.right() - cluster_width)
+            dps_rect = QRectF(cluster_left, row.top(), dps_width, row.height())
+            marker_rect = QRectF(
+                dps_rect.right() + dps_gap,
+                row.center().y() - marker_height / 2,
+                marker_width,
+                marker_height,
+            )
+            actor_rect = QRectF(
+                marker_rect.right() + actor_gap,
+                row.top(),
+                actor_width,
+                row.height(),
+            )
+            return actor_rect, marker_rect, dps_rect
         outline_safe_right = self.width() - 3
         cluster_left = max(row.left(), outline_safe_right - cluster_width)
 
@@ -802,16 +846,18 @@ class CombatFeedOverlay(QWidget):
             description_size = 12
         description_font = self._font("Segoe UI", description_size, QFont.Weight.Black)
         painter.setFont(description_font)
+        # Descriptions hug the spine and elide at their outer (far-from-spine)
+        # end, so the characters nearest the numbers always survive.
         description = painter.fontMetrics().elidedText(
             description,
-            Qt.TextElideMode.ElideLeft,
+            Qt.TextElideMode.ElideRight if self.mirrored else Qt.TextElideMode.ElideLeft,
             max(20, round(description_rect.width())),
         )
         if description:
             self._draw_backed_outlined_text(
                 painter,
                 description_rect,
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                self._description_alignment(),
                 description,
                 label_color,
                 description_font,
@@ -829,11 +875,25 @@ class CombatFeedOverlay(QWidget):
         self._draw_backed_outlined_text(
             painter,
             amount_rect,
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self._amount_alignment(),
             amount_text,
             amount_color,
             amount_font,
         )
+
+    def _description_alignment(self) -> Qt.AlignmentFlag:
+        horizontal = (
+            Qt.AlignmentFlag.AlignLeft if self.mirrored else Qt.AlignmentFlag.AlignRight
+        )
+        return horizontal | Qt.AlignmentFlag.AlignVCenter
+
+    def _amount_alignment(self) -> Qt.AlignmentFlag:
+        # Amounts hug the spine from their side: numbers keep a consistent
+        # column against the icon regardless of digit count.
+        horizontal = (
+            Qt.AlignmentFlag.AlignRight if self.mirrored else Qt.AlignmentFlag.AlignLeft
+        )
+        return horizontal | Qt.AlignmentFlag.AlignVCenter
 
     def _entry_value_fonts(self, event: CombatEvent) -> tuple[QFont, QFont]:
         if self._is_crit_row(event):
@@ -857,6 +917,32 @@ class CombatFeedOverlay(QWidget):
         icon_width = self.ICON_WIDTH * self.text_scale
         description_gap = self.DESCRIPTION_ICON_GAP * self.text_scale
         amount_gap = self.ICON_AMOUNT_GAP * self.text_scale
+        if self.mirrored:
+            # Mirror image of the default: spine hugs the LEFT edge, the
+            # fixed-width amount lane sits inboard of it, and descriptions
+            # grow rightward. Extra window width still all goes to the
+            # description lane, so the number column never drifts.
+            spine_x = rect.left() + self._amount_lane_width() + amount_gap + icon_width / 2
+            spine_x = min(spine_x, rect.right() - self.MIN_DESCRIPTION_WIDTH - icon_width / 2)
+            icon_rect = QRectF(
+                spine_x - icon_width / 2,
+                rect.top(),
+                icon_width,
+                rect.height(),
+            )
+            amount_rect = QRectF(
+                rect.left(),
+                rect.top(),
+                max(20.0, icon_rect.left() - amount_gap - rect.left()),
+                rect.height(),
+            )
+            description_rect = QRectF(
+                icon_rect.right() + description_gap,
+                rect.top(),
+                max(20.0, rect.right() - 4 - icon_rect.right() - description_gap),
+                rect.height(),
+            )
+            return description_rect, icon_rect, amount_rect
         # Anchor the spine to the right: the amount lane is fixed-width (damage
         # text has a known ceiling), so widening the window only grows the
         # description lane instead of piling empty space right of the numbers.

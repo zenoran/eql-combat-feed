@@ -21,6 +21,8 @@ def test_settings_round_trip_split_window_configuration(tmp_path: Path) -> None:
         header_font_size=23.0,
         encounter_timeout=14,
         show_pet=False,
+        mirror_character=True,
+        mirror_pet=False,
         auto_quit_with_game=True,
         minimize_to_tray=True,
         locked=True,

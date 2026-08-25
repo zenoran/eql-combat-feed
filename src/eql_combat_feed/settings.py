@@ -17,6 +17,12 @@ class OverlayPreferences:
     fade_delay: int = 10
     show_resists: bool = True
     show_pet: bool = True
+    # Mirrored feeds lay out amount → icon → description (numbers on the
+    # LEFT). Placed beside an unmirrored feed, the two number lanes meet
+    # back-to-back in the middle and descriptions grow outward. PET defaults
+    # mirrored because the stock arrangement puts it to the right of YOU.
+    mirror_character: bool = False
+    mirror_pet: bool = True
     auto_quit_with_game: bool = False
     minimize_to_tray: bool = False
     hide_when_unfocused: bool = True
@@ -55,6 +61,8 @@ class SettingsStore:
             fade_delay=self._bounded_int("display/fade_delay", 10, 3, 120),
             show_resists=self._settings.value("display/show_resists", True, bool),
             show_pet=self._settings.value("display/show_pet", True, bool),
+            mirror_character=self._settings.value("display/mirror_character", False, bool),
+            mirror_pet=self._settings.value("display/mirror_pet", True, bool),
             auto_quit_with_game=self._settings.value("app/auto_quit_with_game", False, bool),
             minimize_to_tray=self._settings.value("app/minimize_to_tray", False, bool),
             hide_when_unfocused=self._settings.value("app/hide_when_unfocused", True, bool),
