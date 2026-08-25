@@ -40,9 +40,12 @@ HEADER_DPS_BACKDROP_COLOR = QColor(0, 0, 0, 175)
 BACKDROP_COLOR = QColor(0, 0, 0, 190)
 HIT_SURFACE_COLOR = QColor(0, 0, 0, 1)
 # Crits get comic-book treatment: Impact (condensed, heavy, ships with
-# Windows) in fire colors for both the ability name and the number.
+# Windows) in fire colors, a ✸ burst icon, and an orange glow ring drawn
+# between the black outline and the fill so the row visibly detonates.
 CRIT_FONT_FAMILY = "Impact"
-CRIT_LABEL_COLOR = QColor("#ffb019")
+CRIT_LABEL_COLOR = QColor("#ffe14a")
+CRIT_GLOW_COLOR = QColor("#ff7300")
+CRIT_ICON = "✸"
 SOURCE_COLORS = {
     EventKind.MELEE: QColor("#ffff00"),
     EventKind.SKILL: QColor("#ff9d00"),
@@ -655,13 +658,18 @@ class CombatFeedOverlay(QWidget):
             self._paint_entry(painter, rect, entry.event)
 
     def _paint_entry(self, painter: QPainter, rect: QRectF, event: CombatEvent) -> None:
+        crit = event.critical and event.kind is not EventKind.MISS
         description, icon = self._source_parts(event, self.actor)
-        label_color = CRIT_LABEL_COLOR if event.critical else SOURCE_COLORS[event.kind]
+        if crit:
+            icon = CRIT_ICON
+        label_color = CRIT_LABEL_COLOR if crit else SOURCE_COLORS[event.kind]
+        icon_color = CRIT_GLOW_COLOR if crit else label_color
         amount_color = self._amount_color(event, self.actor)
         amount_text = "MISS" if event.kind is EventKind.MISS else f"{event.amount:,}"
         description_rect, icon_rect, amount_rect = self._entry_rects(rect)
+        draw_backed = self._draw_crit_backed_text if crit else self._draw_backed_outlined_text
 
-        if event.critical:
+        if crit:
             # Impact carries its own weight; Black would distort its metrics.
             description_font = self._font(CRIT_FONT_FAMILY, 13, QFont.Weight.Normal)
         else:
@@ -673,7 +681,7 @@ class CombatFeedOverlay(QWidget):
             max(20, round(description_rect.width())),
         )
         if description:
-            self._draw_backed_outlined_text(
+            draw_backed(
                 painter,
                 description_rect,
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
@@ -688,10 +696,10 @@ class CombatFeedOverlay(QWidget):
             icon_rect,
             Qt.AlignmentFlag.AlignCenter,
             icon,
-            label_color,
+            icon_color,
             icon_font,
         )
-        self._draw_backed_outlined_text(
+        draw_backed(
             painter,
             amount_rect,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
@@ -704,9 +712,9 @@ class CombatFeedOverlay(QWidget):
         scale = self.MISS_SCALE if event.kind is EventKind.MISS else 1.0
         icon_font = self._font("Segoe UI Symbol", 17 * scale, QFont.Weight.Black)
         if event.critical:
-            # Slightly larger is safe: Impact is condensed, so the number still
-            # fits the fixed amount lane measured against Segoe UI Black.
-            return icon_font, self._font(CRIT_FONT_FAMILY, 22 * scale, QFont.Weight.Normal)
+            # Larger is safe: Impact is condensed, so the number still fits
+            # the fixed amount lane measured against Segoe UI Black.
+            return icon_font, self._font(CRIT_FONT_FAMILY, 24 * scale, QFont.Weight.Normal)
         return icon_font, self._font("Segoe UI", 21 * scale, QFont.Weight.Black)
 
     def _amount_lane_width(self) -> float:
@@ -842,6 +850,37 @@ class CombatFeedOverlay(QWidget):
         path.addRoundedRect(cls._text_backdrop_rect(rect, alignment, text, font), 3, 3)
         painter.fillPath(path, BACKDROP_COLOR)
         cls._draw_outlined_text(painter, rect, alignment, text, color, font)
+
+    @classmethod
+    def _draw_crit_backed_text(
+        cls,
+        painter: QPainter,
+        rect: QRectF,
+        alignment: Qt.AlignmentFlag,
+        text: str,
+        color: QColor,
+        font: QFont,
+    ) -> None:
+        path = QPainterPath()
+        path.addRoundedRect(cls._text_backdrop_rect(rect, alignment, text, font), 3, 3)
+        painter.fillPath(path, BACKDROP_COLOR)
+        cls._draw_outlined_text(painter, rect, alignment, text, color, font)
+        # Orange glow ring between the black outline and the fill: re-stamp the
+        # text at tight offsets, then repaint the fill on top.
+        painter.setPen(CRIT_GLOW_COLOR)
+        for dx, dy in (
+            (-1.6, 0.0),
+            (1.6, 0.0),
+            (0.0, -1.6),
+            (0.0, 1.6),
+            (-1.2, -1.2),
+            (1.2, -1.2),
+            (-1.2, 1.2),
+            (1.2, 1.2),
+        ):
+            painter.drawText(rect.translated(dx, dy), alignment, text)
+        painter.setPen(color)
+        painter.drawText(rect, alignment, text)
 
     @staticmethod
     def _draw_outlined_text(
