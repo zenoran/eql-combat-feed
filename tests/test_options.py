@@ -11,6 +11,7 @@ qt_widgets = pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 QPoint = qt_core.QPoint
 QSize = qt_core.QSize
 QApplication = qt_widgets.QApplication
+QGroupBox = qt_widgets.QGroupBox
 OptionsDialog = importlib.import_module("eql_combat_feed.options").OptionsDialog
 OverlayPreferences = importlib.import_module("eql_combat_feed.settings").OverlayPreferences
 
@@ -29,6 +30,7 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
     dialog.max_rows.setValue(7)
     dialog.history_rows.setValue(250)
     dialog.encounter_timeout.setValue(14)
+    dialog.reveal_faded_rows_on_hover.setChecked(False)
     dialog.show_pet.setChecked(False)
     dialog.auto_quit_with_game.setChecked(True)
     dialog.minimize_to_tray.setChecked(True)
@@ -43,6 +45,7 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
     assert result.max_rows == 7
     assert result.history_rows == 250
     assert result.encounter_timeout == 14
+    assert result.reveal_faded_rows_on_hover is False
     assert result.show_pet is False
     assert result.auto_quit_with_game is True
     assert result.minimize_to_tray is True
@@ -52,5 +55,36 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
     assert result.pet_position == current.pet_position
     assert result.pet_size == current.pet_size
     assert result.log_file == log
+    dialog.close()
+    app.processEvents()
+
+
+def test_options_dialog_organizes_controls_into_labeled_tabs() -> None:
+    app = QApplication.instance() or QApplication([])
+    dialog = OptionsDialog(OverlayPreferences())
+
+    assert [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())] == [
+        "Display",
+        "Behavior",
+        "Application",
+    ]
+    assert {group.title() for group in dialog.findChildren(QGroupBox)} == {
+        "Appearance",
+        "Feeds",
+        "Text decay",
+        "History and encounters",
+        "Interaction",
+        "Log source",
+        "Application",
+    }
+    assert dialog.tabs.widget(1).isAncestorOf(dialog.reveal_faded_rows_on_hover)
+
+    dialog.fade_rows.setChecked(False)
+    assert dialog.fade_delay.isEnabled() is False
+    assert dialog.reveal_faded_rows_on_hover.isEnabled() is False
+    dialog.fade_rows.setChecked(True)
+    assert dialog.fade_delay.isEnabled() is True
+    assert dialog.reveal_faded_rows_on_hover.isEnabled() is True
+
     dialog.close()
     app.processEvents()

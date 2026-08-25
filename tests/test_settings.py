@@ -20,6 +20,7 @@ def test_settings_round_trip_split_window_configuration(tmp_path: Path) -> None:
         damage_font_size=32.5,
         header_font_size=23.0,
         encounter_timeout=14,
+        reveal_faded_rows_on_hover=False,
         show_pet=False,
         mirror_character=True,
         mirror_pet=False,

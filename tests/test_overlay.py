@@ -844,6 +844,31 @@ def test_hovering_the_feed_pauses_decay_and_restores_rows() -> None:
     overlay.close()
 
 
+def test_hover_reveal_can_be_disabled_without_disabling_history_scroll() -> None:
+    overlay, clock = _fading_overlay(
+        reveal_faded_rows_on_hover=False, max_rows=2, size=QSize(600, 140)
+    )
+    for amount in range(1, 7):
+        overlay.add_event(event(amount))
+    clock.now += 30.0
+    overlay._cursor_inside_feed = lambda: True  # type: ignore[method-assign]
+    overlay.tick()
+
+    assert overlay._hover_hold is False
+    assert overlay._visible_entries() == []
+
+    overlay.set_locked(True)
+    overlay.scroll_history(2)
+    assert overlay._history_offset == 2
+    assert overlay._visible_entries() != []
+
+    overlay._cursor_inside_feed = lambda: False  # type: ignore[method-assign]
+    overlay.tick()
+    assert overlay._history_offset == 0
+    assert overlay._visible_entries() == []
+    overlay.close()
+
+
 def test_scroll_history_clamps_and_requires_overflow() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = CombatFeedOverlay(

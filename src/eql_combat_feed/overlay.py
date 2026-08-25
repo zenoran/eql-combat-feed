@@ -237,19 +237,28 @@ class CombatFeedOverlay(QWidget):
         # fade threshold constantly during combat, and tracking them caused a
         # permanent 20fps repaint loop on the log-polling thread (the "damage
         # shows up late" report against 0.16.0).
-        if not self.preferences.fade_rows or not self._entries:
+        if not self._entries:
             return
-        # Hovering the feed pauses decay and restores every row. The check is
-        # a global cursor poll, NOT a mouse event — locked (click-through)
-        # windows receive no input events at all, but QCursor.pos() doesn't
-        # care, so hover-reveal works even in locked mode.
-        hovering = self._cursor_inside_feed()
-        if self._hover_hold and not hovering and self._locked and self._history_offset:
-            # Leaving a locked feed ends the peek. A locked window has no
-            # other affordance to release scrolled history, and stale offset
-            # would pin full-opacity rows on screen indefinitely.
+        # Cursor position comes from a global poll, NOT a mouse event — locked
+        # (click-through) windows receive no input events at all. Keep pointer
+        # presence separate from hover-reveal: locked wheel history still needs
+        # to release when the cursor leaves even if fading or hover-reveal is
+        # disabled.
+        cursor_inside = self._cursor_inside_feed()
+        history_released = bool(not cursor_inside and self._locked and self._history_offset)
+        if history_released:
             self._history_offset = 0
-        self._hover_hold = hovering
+        hover_hold = bool(
+            self.preferences.fade_rows
+            and self.preferences.reveal_faded_rows_on_hover
+            and cursor_inside
+        )
+        hover_changed = hover_hold != self._hover_hold
+        self._hover_hold = hover_hold
+        if not self.preferences.fade_rows:
+            if history_released or hover_changed:
+                self.update()
+            return
         signature = tuple(
             round(self._entry_alpha(entry), 2) for entry in self._visible_entries()
         )

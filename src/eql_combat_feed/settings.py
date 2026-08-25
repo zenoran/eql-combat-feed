@@ -15,6 +15,7 @@ class OverlayPreferences:
     encounter_timeout: int = 10
     fade_rows: bool = True
     fade_delay: int = 10
+    reveal_faded_rows_on_hover: bool = True
     show_resists: bool = True
     show_pet: bool = True
     # Mirrored feeds lay out amount → icon → description (numbers on the
@@ -59,6 +60,9 @@ class SettingsStore:
             encounter_timeout=self._bounded_int("display/encounter_timeout", 10, 3, 60),
             fade_rows=self._settings.value("display/fade_rows", True, bool),
             fade_delay=self._bounded_int("display/fade_delay", 10, 3, 120),
+            reveal_faded_rows_on_hover=self._settings.value(
+                "display/reveal_faded_rows_on_hover", True, bool
+            ),
             show_resists=self._settings.value("display/show_resists", True, bool),
             show_pet=self._settings.value("display/show_pet", True, bool),
             mirror_character=self._settings.value("display/mirror_character", False, bool),
