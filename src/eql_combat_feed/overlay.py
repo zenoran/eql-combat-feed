@@ -41,14 +41,16 @@ HEADER_BACKDROP_COLOR = QColor(4, 7, 10, 210)
 HEADER_DPS_BACKDROP_COLOR = QColor(0, 0, 0, 175)
 BACKDROP_COLOR = QColor(0, 0, 0, 190)
 HIT_SURFACE_COLOR = QColor(0, 0, 0, 1)
-# Crits explode the row: 1.6x row height, a ✸ burst icon, and clearly
-# bigger/heavier text in fire colors. No exotic font, no glow ring — both
-# were tried (0.15.2/0.15.3) and read worse at combat glance-speed than
-# plain Segoe UI Black scaled up.
+# Crits explode in place: a ✸ burst icon and clearly bigger/heavier text in
+# fire colors at the SAME row pitch as everything else. No exotic font, no
+# glow ring, no taller row — all three were tried (0.15.2–0.16.0) and read
+# worse at combat glance-speed; the 1.6x row growth in particular left a
+# padding gap around the number instead of feeling bigger. Digit cap height
+# at 28pt still fits a normal row, so uniform spacing costs nothing.
 CRIT_LABEL_COLOR = QColor("#ffe14a")
 CRIT_ICON_COLOR = QColor("#ff7300")
 CRIT_ICON = "✸"
-CRIT_ROW_SCALE = 1.6
+CRIT_ROW_SCALE = 1.0
 # Text decay: rows sit at full opacity for preferences.fade_delay seconds
 # after arrival, then fade out over FADE_DURATION_S and stop taking up
 # space, so the feed melts away between fights. History scrolling shows
@@ -62,6 +64,9 @@ SOURCE_COLORS = {
     EventKind.PROC: QColor("#8b7dff"),
     EventKind.PET: QColor("#00ffff"),
     EventKind.MISS: QColor("#ffffff"),
+    # Resisted spells read as a muted echo of the spell color: present in the
+    # lane so failed slows/nukes are visible, but never louder than a landed hit.
+    EventKind.RESIST: QColor("#c88bc8"),
 }
 CHARACTER_DAMAGE_KINDS = frozenset(
     {
@@ -174,6 +179,8 @@ class CombatFeedOverlay(QWidget):
         self.update()
 
     def add_event(self, event: CombatEvent) -> bool:
+        if event.kind is EventKind.RESIST and not self.preferences.show_resists:
+            return False
         if self._actor_for_event(event) != self.actor:
             return False
         if self._history_offset:
@@ -204,12 +211,15 @@ class CombatFeedOverlay(QWidget):
 
     def tick(self) -> None:
         # Driven by the controller's 50ms animation timer. Repaint only while
-        # a fade is actually in motion: the quantized alpha signature is stable
-        # both before any row reaches its delay and after everything has faded.
+        # a fade is actually changing pixels: the quantized alpha signature
+        # covers VISIBLE rows only. Off-screen history entries age past the
+        # fade threshold constantly during combat, and tracking them caused a
+        # permanent 20fps repaint loop on the log-polling thread (the "damage
+        # shows up late" report against 0.16.0).
         if not self.preferences.fade_rows or not self._entries:
             return
         signature = tuple(
-            round(self._entry_alpha(entry), 2) for entry in self._entries
+            round(self._entry_alpha(entry), 2) for entry in self._visible_entries()
         )
         if signature != self._fade_signature:
             self._fade_signature = signature
@@ -341,9 +351,13 @@ class CombatFeedOverlay(QWidget):
                 target = entry.event.target or "—"
                 source = entry.event.source or "You"
                 critical = " · CRITICAL" if entry.event.critical else ""
+                if entry.event.kind is EventKind.RESIST:
+                    amount = "RESISTED"
+                else:
+                    amount = f"{entry.event.amount:,}"
                 text = (
                     f"{source} · {self._source_label(entry.event)} · "
-                    f"{entry.event.amount:,} → {target}{critical}"
+                    f"{amount} → {target}{critical}"
                 )
                 QToolTip.showText(event.globalPos(), text, self)
                 return True
@@ -357,6 +371,10 @@ class CombatFeedOverlay(QWidget):
             return "pet" if event.amount > 0 else None
         if event.kind is EventKind.MISS:
             return "pet" if event.source and event.source.casefold() != "you" else "character"
+        if event.kind is EventKind.RESIST:
+            # Outgoing only — incoming resists are filtered above with the
+            # rest of the incoming traffic.
+            return "character"
         if event.amount > 0 and event.kind in CHARACTER_DAMAGE_KINDS:
             return "character"
         return None
@@ -726,7 +744,12 @@ class CombatFeedOverlay(QWidget):
         label_color = CRIT_LABEL_COLOR if crit else SOURCE_COLORS[event.kind]
         icon_color = CRIT_ICON_COLOR if crit else label_color
         amount_color = self._amount_color(event, self.actor)
-        amount_text = "MISS" if event.kind is EventKind.MISS else f"{event.amount:,}"
+        if event.kind is EventKind.MISS:
+            amount_text = "MISS"
+        elif event.kind is EventKind.RESIST:
+            amount_text = "RESIST"
+        else:
+            amount_text = f"{event.amount:,}"
         description_rect, icon_rect, amount_rect = self._entry_rects(rect)
 
         description_font = self._font("Segoe UI", 15 if crit else 12, QFont.Weight.Black)
@@ -772,7 +795,11 @@ class CombatFeedOverlay(QWidget):
                 self._font("Segoe UI Symbol", 22, QFont.Weight.Black),
                 self._font("Segoe UI", 28, QFont.Weight.Black),
             )
-        scale = self.MISS_SCALE if event.kind is EventKind.MISS else 1.0
+        scale = (
+            self.MISS_SCALE
+            if event.kind in (EventKind.MISS, EventKind.RESIST)
+            else 1.0
+        )
         return (
             self._font("Segoe UI Symbol", 17 * scale, QFont.Weight.Black),
             self._font("Segoe UI", 21 * scale, QFont.Weight.Black),
@@ -815,6 +842,8 @@ class CombatFeedOverlay(QWidget):
     def _source_parts(event: CombatEvent, actor: Actor) -> tuple[str, str]:
         ability = (event.ability or "Melee").upper()
         physical_skills = {"KICK", "BASH", "BACKSTAB", "FRENZY", "SLAM", "CLEAVE", "REAVE"}
+        if event.kind is EventKind.RESIST:
+            return ability, "⊘"
         if event.kind is EventKind.MISS:
             return (ability, "◆") if ability in physical_skills else ("", "⚔")
         if event.kind is EventKind.MELEE:
@@ -837,6 +866,8 @@ class CombatFeedOverlay(QWidget):
     def _amount_color(event: CombatEvent, actor: Actor) -> QColor:
         if event.critical:
             return QColor("#ff2020")
+        if event.kind is EventKind.RESIST:
+            return QColor("#c88bc8")
         if event.kind is EventKind.MISS:
             return QColor("#ffffff")
         return CHARACTER_AMOUNT if actor == "character" else PET_AMOUNT

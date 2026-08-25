@@ -15,6 +15,7 @@ class OverlayPreferences:
     encounter_timeout: int = 10
     fade_rows: bool = True
     fade_delay: int = 10
+    show_resists: bool = True
     show_pet: bool = True
     auto_quit_with_game: bool = False
     minimize_to_tray: bool = False
@@ -52,6 +53,7 @@ class SettingsStore:
             encounter_timeout=self._bounded_int("display/encounter_timeout", 10, 3, 60),
             fade_rows=self._settings.value("display/fade_rows", True, bool),
             fade_delay=self._bounded_int("display/fade_delay", 10, 3, 120),
+            show_resists=self._settings.value("display/show_resists", True, bool),
             show_pet=self._settings.value("display/show_pet", True, bool),
             auto_quit_with_game=self._settings.value("app/auto_quit_with_game", False, bool),
             minimize_to_tray=self._settings.value("app/minimize_to_tray", False, bool),

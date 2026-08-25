@@ -518,7 +518,7 @@ def test_critical_amount_is_red_without_extra_label() -> None:
     assert CombatFeedOverlay._source_parts(critical, "character") == ("", "⚔")
 
 
-def test_critical_rows_are_taller_with_bigger_text() -> None:
+def test_critical_rows_keep_normal_pitch_with_bigger_text() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = CombatFeedOverlay(OverlayPreferences(), "character")
     plain = event(123, EventKind.SPELL, ability="Ice Comet")
@@ -536,7 +536,8 @@ def test_critical_rows_are_taller_with_bigger_text() -> None:
     _, crit_amount_font = overlay._entry_value_fonts(crit)
     assert crit_amount_font.family() == plain_amount_font.family() == "Segoe UI"
     assert crit_amount_font.pointSizeF() > plain_amount_font.pointSizeF()
-    assert overlay._entry_height(crit) == pytest.approx(overlay._entry_height(plain) * 1.6)
+    # Same row pitch as every other row — bigger text, no padding gap (0.17.0).
+    assert overlay._entry_height(crit) == pytest.approx(overlay._entry_height(plain))
 
     # MISS crits stay ordinary rows.
     miss = CombatEvent(
@@ -675,4 +676,97 @@ def test_tick_repaints_only_while_a_fade_is_in_motion() -> None:
     overlay.tick()
     overlay.tick()
     assert len(updates) == 4
+    overlay.close()
+
+
+def test_outgoing_resists_route_to_character_and_respect_the_toggle() -> None:
+    app = QApplication.instance() or QApplication([])
+    resist = CombatEvent(
+        timestamp=1.0,
+        kind=EventKind.RESIST,
+        ability="Selo's Chords of Cessation",
+        target="an abhorrent",
+        source="You",
+    )
+    incoming = CombatEvent(
+        timestamp=1.0,
+        kind=EventKind.RESIST,
+        ability="Ice Comet",
+        target="You",
+        source="a gargoyle",
+        incoming=True,
+    )
+    shown = CombatFeedOverlay(OverlayPreferences(), "character")
+    assert shown.add_event(resist) is True
+    assert shown.add_event(incoming) is False
+    assert CombatFeedOverlay._actor_for_event(resist) == "character"
+
+    hidden = CombatFeedOverlay(OverlayPreferences(show_resists=False), "character")
+    assert hidden.add_event(resist) is False
+    assert hidden.entries == ()
+
+    pet = CombatFeedOverlay(OverlayPreferences(), "pet")
+    assert pet.add_event(resist) is False
+
+    shown.close()
+    hidden.close()
+    pet.close()
+    app.processEvents()
+
+
+def test_resist_rows_render_smaller_with_spell_name_and_resist_text() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(), "character")
+    resist = CombatEvent(
+        timestamp=1.0,
+        kind=EventKind.RESIST,
+        ability="Denon's Disruptive Discord",
+        target="an abhorrent",
+        source="You",
+    )
+    hit = event(1462, EventKind.SPELL, ability="Ice Comet")
+
+    description, icon = overlay._source_parts(resist, "character")
+    assert description == "DENON'S DISRUPTIVE DISCORD"
+    assert icon == "⊘"
+
+    _, resist_font = overlay._entry_value_fonts(resist)
+    _, hit_font = overlay._entry_value_fonts(hit)
+    assert resist_font.pointSizeF() < hit_font.pointSizeF()
+    assert resist_font.pointSizeF() == pytest.approx(
+        hit_font.pointSizeF() * overlay.MISS_SCALE
+    )
+
+    # Resist rows are never crit rows and never grow.
+    assert overlay._entry_height(resist) == pytest.approx(overlay._row_height())
+
+    overlay.close()
+    app.processEvents()
+
+
+def test_offscreen_history_fading_does_not_trigger_repaints() -> None:
+    """Regression (0.16.0): the tick signature covered ALL history entries, so
+    during combat some off-screen row was always mid-fade and both overlays
+    repainted at a continuous 20fps, delaying damage display."""
+    overlay, clock = _fading_overlay(max_rows=3)
+    for amount in range(100, 110):  # old rows destined to fade off-screen
+        overlay.add_event(event(amount))
+    clock.now += 9.0
+    for amount in (900, 901, 902):  # fresh rows fill the visible window
+        overlay.add_event(event(amount))
+
+    updates: list[int] = []
+    overlay.update = lambda *a: updates.append(1)  # type: ignore[method-assign]
+
+    clock.now += 1.5  # old rows now mid-fade, but none of them are visible
+    overlay.tick()  # first signature capture may repaint once
+    baseline = len(updates)
+    for _ in range(10):
+        clock.now += 0.05
+        overlay.tick()
+    assert len(updates) == baseline  # quiescent while visible rows are opaque
+
+    clock.now += 8.6  # now the visible rows themselves fade: repaints resume
+    overlay.tick()
+    assert len(updates) == baseline + 1
     overlay.close()

@@ -67,6 +67,9 @@ class OptionsDialog(QDialog):
         self.fade_delay.setEnabled(preferences.fade_rows)
         self.fade_rows.toggled.connect(self.fade_delay.setEnabled)
 
+        self.show_resists = QCheckBox("Show your spells being resisted")
+        self.show_resists.setChecked(preferences.show_resists)
+
         self.show_pet = QCheckBox("Show separate Pet damage window")
         self.show_pet.setChecked(preferences.show_pet)
 
@@ -104,6 +107,7 @@ class OptionsDialog(QDialog):
         form.addRow("End encounter after", self.encounter_timeout)
         form.addRow("Text decay", self.fade_rows)
         form.addRow("Fade rows after", self.fade_delay)
+        form.addRow("Spell resists", self.show_resists)
         form.addRow("Pet feed", self.show_pet)
         form.addRow("Game exit", self.auto_quit_with_game)
         form.addRow("Close button", self.minimize_to_tray)
@@ -144,6 +148,7 @@ class OptionsDialog(QDialog):
             encounter_timeout=self.encounter_timeout.value(),
             fade_rows=self.fade_rows.isChecked(),
             fade_delay=self.fade_delay.value(),
+            show_resists=self.show_resists.isChecked(),
             show_pet=self.show_pet.isChecked(),
             auto_quit_with_game=self.auto_quit_with_game.isChecked(),
             minimize_to_tray=self.minimize_to_tray.isChecked(),
@@ -178,6 +183,7 @@ class OptionsDialog(QDialog):
         self.encounter_timeout.setValue(defaults.encounter_timeout)
         self.fade_rows.setChecked(defaults.fade_rows)
         self.fade_delay.setValue(defaults.fade_delay)
+        self.show_resists.setChecked(defaults.show_resists)
         self.show_pet.setChecked(defaults.show_pet)
         self.auto_quit_with_game.setChecked(defaults.auto_quit_with_game)
         self.minimize_to_tray.setChecked(defaults.minimize_to_tray)
