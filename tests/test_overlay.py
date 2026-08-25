@@ -806,3 +806,26 @@ def test_status_rows_are_shorter_and_darker_than_hit_rows() -> None:
 
     overlay.close()
     app.processEvents()
+
+
+def test_hovering_the_feed_pauses_decay_and_restores_rows() -> None:
+    """Hover-reveal uses a global cursor poll, not mouse events, so it works
+    even when the window is locked/click-through (0.17.2)."""
+    overlay, clock = _fading_overlay()
+    for amount in (100, 200, 300):
+        overlay.add_event(event(amount))
+    clock.now += 30.0
+    overlay.tick()
+    assert overlay._visible_entries() == []
+
+    overlay._cursor_inside_feed = lambda: True  # type: ignore[method-assign]
+    overlay.tick()
+    assert overlay._hover_hold is True
+    assert [e.event.amount for e in overlay._visible_entries()] == [100, 200, 300]
+    assert all(overlay._entry_alpha(e) == 1.0 for e in overlay._entries)
+
+    overlay._cursor_inside_feed = lambda: False  # type: ignore[method-assign]
+    overlay.tick()
+    assert overlay._hover_hold is False
+    assert overlay._visible_entries() == []
+    overlay.close()

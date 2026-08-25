@@ -7,6 +7,7 @@ from typing import Literal
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QCursor,
     QFont,
     QFontMetricsF,
     QLinearGradient,
@@ -129,6 +130,7 @@ class CombatFeedOverlay(QWidget):
         self._locked = False
         self._dps = DpsSnapshot()
         self._fade_signature: tuple[float, ...] = ()
+        self._hover_hold = False
 
         actor_name = "You" if actor == "character" else "Pet"
         self.setWindowTitle(f"EQL Combat Feed — {actor_name}")
@@ -222,6 +224,11 @@ class CombatFeedOverlay(QWidget):
         # shows up late" report against 0.16.0).
         if not self.preferences.fade_rows or not self._entries:
             return
+        # Hovering the feed pauses decay and restores every row. The check is
+        # a global cursor poll, NOT a mouse event — locked (click-through)
+        # windows receive no input events at all, but QCursor.pos() doesn't
+        # care, so hover-reveal works even in locked mode.
+        self._hover_hold = self._cursor_inside_feed()
         signature = tuple(
             round(self._entry_alpha(entry), 2) for entry in self._visible_entries()
         )
@@ -229,12 +236,15 @@ class CombatFeedOverlay(QWidget):
             self._fade_signature = signature
             self.update()
 
+    def _cursor_inside_feed(self) -> bool:
+        return self.isVisible() and self.frameGeometry().contains(QCursor.pos())
+
     @staticmethod
     def _now() -> float:
         return monotonic()
 
     def _entry_alpha(self, entry: DisplayEntry) -> float:
-        if not self.preferences.fade_rows or self._history_offset:
+        if not self.preferences.fade_rows or self._history_offset or self._hover_hold:
             return 1.0
         age = self._now() - entry.received
         fading = age - self.preferences.fade_delay
