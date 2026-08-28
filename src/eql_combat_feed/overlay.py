@@ -37,6 +37,7 @@ CHARACTER_HEADER = QColor("#ffff00")
 PET_HEADER = QColor("#00ffff")
 CHARACTER_AMOUNT = QColor("#ffff00")
 PET_AMOUNT = QColor("#00ffff")
+RESIST_AMOUNT = QColor("#4da6ff")
 DPS_COLOR = QColor("#7dff00")
 HEADER_BACKDROP_COLOR = QColor(4, 7, 10, 210)
 HEADER_DPS_BACKDROP_COLOR = QColor(0, 0, 0, 175)
@@ -65,10 +66,10 @@ SOURCE_COLORS = {
     EventKind.SPELL: QColor("#ff3dff"),
     EventKind.PROC: QColor("#8b7dff"),
     EventKind.PET: QColor("#00ffff"),
-    # Status rows (miss/resist) are deliberately dim: informative on a second
-    # glance, invisible on the first. The fun stuff gets the brightness budget.
+    # Misses stay compact and subdued. Resists use normal spell-scale magenta
+    # ability/icon text plus a distinct electric-blue failure value lane.
     EventKind.MISS: QColor("#9a9a9a"),
-    EventKind.RESIST: QColor("#8a5f8a"),
+    EventKind.RESIST: QColor("#ff3dff"),
 }
 CHARACTER_DAMAGE_KINDS = frozenset(
     {
@@ -104,8 +105,8 @@ class CombatFeedOverlay(QWidget):
     AMOUNT_TEMPLATE = "888,888"
     DPS_TEMPLATE = "99,999 DPS"
     MIN_DESCRIPTION_WIDTH = 24.0
-    # Miss/resist rows: smaller text (MISS_SCALE) in a row that hugs it —
-    # row height is content-driven, so shrinking the text shrinks the row.
+    # Misses are smaller status rows. Resists intentionally use normal hit scale
+    # so failed spells and weapon procs remain visible in a busy combat feed.
     MISS_SCALE = 0.62
     # The constant visual whitespace between adjacent row plates (scaled by
     # text size). This, not row pitch, is what reads as "spacing".
@@ -435,7 +436,7 @@ class CombatFeedOverlay(QWidget):
 
     @staticmethod
     def _is_status_row(event: CombatEvent) -> bool:
-        return event.kind in (EventKind.MISS, EventKind.RESIST)
+        return event.kind is EventKind.MISS
 
     def _plate_height(self, event: CombatEvent) -> float:
         _, amount_font = self._entry_value_fonts(event)
@@ -1006,7 +1007,7 @@ class CombatFeedOverlay(QWidget):
         if event.critical:
             return QColor("#ff2020")
         if event.kind is EventKind.RESIST:
-            return QColor("#8a5f8a")
+            return RESIST_AMOUNT
         if event.kind is EventKind.MISS:
             return QColor("#9a9a9a")
         return CHARACTER_AMOUNT if actor == "character" else PET_AMOUNT

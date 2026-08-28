@@ -29,6 +29,8 @@ DpsSnapshot = dps_module.DpsSnapshot
 CombatEvent = models.CombatEvent
 EventKind = models.EventKind
 CombatFeedOverlay = overlay_module.CombatFeedOverlay
+RESIST_AMOUNT = overlay_module.RESIST_AMOUNT
+SOURCE_COLORS = overlay_module.SOURCE_COLORS
 OverlayPreferences = settings_module.OverlayPreferences
 
 
@@ -734,7 +736,7 @@ def test_outgoing_resists_route_to_character_and_respect_the_toggle() -> None:
     app.processEvents()
 
 
-def test_resist_rows_render_smaller_with_spell_name_and_resist_text() -> None:
+def test_resist_rows_use_full_size_with_spell_name_and_resist_text() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = CombatFeedOverlay(OverlayPreferences(), "character")
     resist = CombatEvent(
@@ -752,13 +754,8 @@ def test_resist_rows_render_smaller_with_spell_name_and_resist_text() -> None:
 
     _, resist_font = overlay._entry_value_fonts(resist)
     _, hit_font = overlay._entry_value_fonts(hit)
-    assert resist_font.pointSizeF() < hit_font.pointSizeF()
-    assert resist_font.pointSizeF() == pytest.approx(
-        hit_font.pointSizeF() * overlay.MISS_SCALE
-    )
-
-    # Resist rows are compact status rows: shorter than hits, never crit-sized.
-    assert overlay._entry_height(resist) < overlay._entry_height(event(123))
+    assert resist_font.pointSizeF() == hit_font.pointSizeF()
+    assert overlay._entry_height(resist) == pytest.approx(overlay._entry_height(hit))
 
     overlay.close()
     app.processEvents()
@@ -792,9 +789,7 @@ def test_offscreen_history_fading_does_not_trigger_repaints() -> None:
     overlay.close()
 
 
-def test_status_rows_are_shorter_and_darker_than_hit_rows() -> None:
-    """Misses and resists conserve vertical space and brightness: compact row
-    pitch, smaller text, dim colors — only the fun stuff stays big (0.17.1)."""
+def test_misses_stay_compact_but_resists_match_spell_emphasis() -> None:
     app = QApplication.instance() or QApplication([])
     overlay = CombatFeedOverlay(OverlayPreferences(), "character")
     miss = event(0, EventKind.MISS)
@@ -805,17 +800,17 @@ def test_status_rows_are_shorter_and_darker_than_hit_rows() -> None:
         target="an abhorrent",
         source="You",
     )
-    hit = event(123, EventKind.MELEE)
+    spell = event(123, EventKind.SPELL, ability="Ice Comet")
 
-    for status in (miss, resist):
-        assert overlay._entry_height(status) < overlay._entry_height(hit)
+    assert overlay._entry_height(miss) < overlay._entry_height(spell)
+    assert overlay._entry_height(resist) == pytest.approx(overlay._entry_height(spell))
 
-    # Dim, not bright: status colors stay well below full-brightness lanes.
-    miss_color = CombatFeedOverlay._amount_color(miss, "character")
-    resist_color = CombatFeedOverlay._amount_color(resist, "character")
-    hit_color = CombatFeedOverlay._amount_color(hit, "character")
-    assert miss_color.value() < 180 < hit_color.value()
-    assert resist_color.value() < 150 < hit_color.value()
+    # Misses remain dim. Resists keep successful-spell label/icon color, while
+    # the RESIST plate uses its own vivid failure color.
+    assert CombatFeedOverlay._amount_color(miss, "character").value() < 180
+    assert SOURCE_COLORS[EventKind.RESIST] == SOURCE_COLORS[EventKind.SPELL]
+    assert CombatFeedOverlay._amount_color(resist, "character") == RESIST_AMOUNT
+    assert CombatFeedOverlay._amount_color(spell, "character") != RESIST_AMOUNT
 
     overlay.close()
     app.processEvents()
@@ -943,13 +938,10 @@ def test_visual_gap_between_rows_is_constant_across_all_row_types() -> None:
     assert all(
         gap == pytest.approx(overlay.ROW_GAP * overlay.text_scale) for gap in gaps.values()
     ), gaps
-    # And the ordering that motivates it: crit > plain > status rows.
-    assert (
-        overlay._entry_height(crit)
-        > overlay._entry_height(plain)
-        > overlay._entry_height(miss)
-        == overlay._entry_height(resist)
-    )
+    # Resists now carry normal spell emphasis; only misses stay compact.
+    assert overlay._entry_height(crit) > overlay._entry_height(plain)
+    assert overlay._entry_height(resist) == pytest.approx(overlay._entry_height(plain))
+    assert overlay._entry_height(plain) > overlay._entry_height(miss)
     overlay.close()
     app.processEvents()
 
