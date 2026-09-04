@@ -9,6 +9,7 @@ QSettings = qt_core.QSettings
 QSize = qt_core.QSize
 settings_module = importlib.import_module("eql_combat_feed.settings")
 OverlayPreferences = settings_module.OverlayPreferences
+LogSearchHistoryEntry = settings_module.LogSearchHistoryEntry
 SettingsStore = settings_module.SettingsStore
 
 
@@ -42,6 +43,32 @@ def test_settings_round_trip_split_window_configuration(tmp_path: Path) -> None:
     loaded = SettingsStore(QSettings(str(settings_file), QSettings.Format.IniFormat)).load()
 
     assert loaded == preferences
+
+
+def test_search_history_round_trips_and_ignores_malformed_data(tmp_path: Path) -> None:
+    settings = QSettings(str(tmp_path / "history.ini"), QSettings.Format.IniFormat)
+    store = SettingsStore(settings)
+    history = [
+        LogSearchHistoryEntry("you looted", "minor", 3600, False),
+        LogSearchHistoryEntry(r"resisted your .*", "", None, True),
+    ]
+
+    store.save_search_history(history)
+    assert store.load_search_history() == history
+
+    settings.setValue("search/history", "not json")
+    assert store.load_search_history() == []
+
+
+def test_search_history_is_capped(tmp_path: Path) -> None:
+    store = SettingsStore(
+        QSettings(str(tmp_path / "history-cap.ini"), QSettings.Format.IniFormat)
+    )
+    history = [LogSearchHistoryEntry(f"search {index}") for index in range(30)]
+
+    store.save_search_history(history)
+
+    assert store.load_search_history() == history[:20]
 
 
 def test_old_percentages_migrate_to_equivalent_independent_point_sizes(

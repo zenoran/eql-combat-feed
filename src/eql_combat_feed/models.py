@@ -18,6 +18,12 @@ class EventKind(StrEnum):
     KILL = "kill"
 
 
+class HasteState(StrEnum):
+    UNKNOWN = "unknown"
+    ACTIVE = "active"
+    MISSING = "missing"
+
+
 @dataclass(frozen=True, slots=True)
 class CombatEvent:
     timestamp: float

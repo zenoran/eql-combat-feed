@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 qt_widgets = pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 QApplication = qt_widgets.QApplication
 hotkey_module = importlib.import_module("eql_combat_feed.hotkey")
+GlobalHotkey = hotkey_module.GlobalHotkey
 GlobalLockHotkey = hotkey_module.GlobalLockHotkey
 
 
@@ -28,6 +29,15 @@ def test_hotkey_poll_toggles_once_per_key_press(monkeypatch) -> None:
     hotkey._poll()
 
     assert calls == [True, True]
+    hotkey.unregister()
+    app.processEvents()
+
+
+def test_generic_hotkey_keeps_configured_key_chord() -> None:
+    app = QApplication.instance() or QApplication([])
+    hotkey = GlobalHotkey(lambda: None, keys=(0x11, 0x12, ord("G")))
+
+    assert hotkey.keys == (0x11, 0x12, ord("G"))
     hotkey.unregister()
     app.processEvents()
 

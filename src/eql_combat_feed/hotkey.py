@@ -118,17 +118,21 @@ class GlobalWheelCapture:
         self.registered = False
 
 
-class GlobalLockHotkey(QAbstractNativeEventFilter):
-    """Poll Ctrl+Alt+L directly so click-through windows can always be recovered.
+class GlobalHotkey(QAbstractNativeEventFilter):
+    """Poll a key chord so it works even while click-through windows are focused.
 
     ``RegisterHotKey`` messages do not consistently reach Qt's native event filter
     on every Windows system. ``GetAsyncKeyState`` is process-global, needs no
     focused window, and cannot lose a registration fight to another application.
     """
 
-    def __init__(self, callback: Callable[[], None]) -> None:
+    VK_CONTROL = VK_CONTROL
+    VK_MENU = VK_MENU
+
+    def __init__(self, callback: Callable[[], None], *, keys: tuple[int, ...]) -> None:
         super().__init__()
         self.callback = callback
+        self.keys = keys
         self.registered = False
         self._chord_was_down = False
         self._timer = QTimer()
@@ -156,13 +160,17 @@ class GlobalLockHotkey(QAbstractNativeEventFilter):
             self.callback()
         self._chord_was_down = chord_down
 
-    @staticmethod
-    def _chord_down() -> bool:
+    def _chord_down(self) -> bool:
         user32 = ctypes.windll.user32
-        return all(
-            user32.GetAsyncKeyState(key) & KEY_DOWN_MASK for key in (VK_CONTROL, VK_MENU, VK_L)
-        )
+        return all(user32.GetAsyncKeyState(key) & KEY_DOWN_MASK for key in self.keys)
 
     def nativeEventFilter(self, event_type, message) -> tuple[bool, int]:  # type: ignore[override]
         del event_type, message
         return False, 0
+
+
+class GlobalLockHotkey(GlobalHotkey):
+    """Ctrl+Alt+L lock-toggle chord retained for backwards compatibility."""
+
+    def __init__(self, callback: Callable[[], None]) -> None:
+        super().__init__(callback, keys=(VK_CONTROL, VK_MENU, VK_L))

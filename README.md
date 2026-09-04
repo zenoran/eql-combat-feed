@@ -36,12 +36,16 @@ opaque panel covering the game. No bundled combat-analysis suite.
   the public GitHub releases API that sends nothing but a version string in
   the User-Agent. Turn it off in Options and the app makes no connections at
   all.
-- Watches exactly three keys for the **Ctrl+Alt+L** lock toggle. Click-through
-  overlays ignore all mouse input by design, so the unlock chord must work even
-  when the game has focus; the app polls the up/down state of Ctrl, Alt, and L
-  through the standard Windows `GetAsyncKeyState` call. It never sees, buffers,
-  or records anything you type — that is the entire keyboard surface, and the
-  [source](src/eql_combat_feed/hotkey.py) is short enough to check yourself.
+- Provides an on-demand local log search with **Ctrl+Alt+G**. It supports Include
+  and Exclude regexes, a lookback range, highlighted matches, chronological
+  results, and a local recent-search picker. Search runs against the selected log
+  only; no log content is transmitted.
+- Watches only the four keys used by the **Ctrl+Alt+L** lock toggle and
+  **Ctrl+Alt+G** search toggle. Click-through overlays ignore mouse input by
+  design, so these chords must work while the game has focus; the app polls only
+  the up/down state of Ctrl, Alt, L, and G through the standard Windows
+  `GetAsyncKeyState` call. It never sees, buffers, or records anything you type,
+  and the [source](src/eql_combat_feed/hotkey.py) is short enough to check yourself.
 
 It intentionally ignores incoming damage, healing, resists, kills, damage shields,
 and unrelated combat. Those features belong in a full parser; this is not trying to
@@ -104,6 +108,7 @@ persisted and can be changed later.
 - Drag any edge or corner to resize that overlay freely.
 - Right-click either overlay or the tray icon for controls.
 - **Ctrl+Alt+L** locks/unlocks both overlays globally.
+- **Ctrl+Alt+G** opens the local log-search popup; press it again or Escape to hide it.
 - Mouse wheel reviews the hovered overlay's retained history.
 - Double-click an unlocked overlay to clear its history.
 

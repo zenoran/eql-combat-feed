@@ -1,4 +1,4 @@
-from eql_combat_feed.models import EventKind
+from eql_combat_feed.models import EventKind, HasteState
 from eql_combat_feed.parser import EqlCombatParser, character_name_from_log
 
 TS = "[Sat Aug 22 10:13:22 2026] "
@@ -224,3 +224,105 @@ def test_unrelated_third_party_combat_is_ignored() -> None:
         parse("a magician hit a dread skeleton for 200 points of magic damage by Shock of Spikes.")
         == []
     )
+
+
+def test_player_persistent_haste_tracks_standard_and_augmentation_families() -> None:
+    parser = EqlCombatParser("Hero")
+    assert parser.haste_state("character") is HasteState.UNKNOWN
+
+    parser.parse_line(TS + "You feel much faster.")
+    parser.parse_line(TS + "You feel your body pulse with energy.")
+    assert parser.haste_state("character") is HasteState.ACTIVE
+
+    parser.parse_line(TS + "Your speed returns to normal.")
+    assert parser.haste_state("character") is HasteState.ACTIVE
+
+    parser.parse_line(TS + "The pulsing energy fades.")
+    assert parser.haste_state("character") is HasteState.MISSING
+
+
+def test_player_haste_ignores_bard_movement_cast_and_failure_lines() -> None:
+    parser = EqlCombatParser("Hero")
+    ignored = [
+        "A burst of strength surges through your body.",
+        "Your surge of strength fades.",
+        "You feel your pulse quicken.",
+        "Your battle fury fades.",
+        "Your feet move faster.",
+        "You slow down.",
+        "You begin casting Alacrity.",
+        "Your spell fizzles!",
+        "Your casting has been interrupted!",
+        "Your Alacrity spell did not take hold.",
+        "Your Alacrity spell on Kobn has been overwritten.",
+    ]
+    for body in ignored:
+        parser.parse_line(TS + body)
+    assert parser.haste_state("character") is HasteState.UNKNOWN
+
+
+def test_pet_persistent_haste_requires_current_pet_and_tracks_families() -> None:
+    parser = EqlCombatParser("Hero")
+    parser.parse_line(TS + "A stranger feels much faster.")
+    assert parser.haste_state("pet") is HasteState.UNKNOWN
+
+    parser.parse_line(TS + "Kobn told you, 'Attacking a goblin Master.'")
+    parser.parse_line(TS + "Kobn feels much faster.")
+    parser.parse_line(TS + "Kobn foams at the mouth.")
+    assert parser.haste_state("pet") is HasteState.ACTIVE
+
+    parser.parse_line(TS + "Your pet's Alacrity spell has worn off.")
+    assert parser.haste_state("pet") is HasteState.ACTIVE
+    parser.parse_line(TS + "Your pet's Spirit Quickening spell has worn off.")
+    assert parser.haste_state("pet") is HasteState.MISSING
+
+
+def test_pet_haste_supports_literal_haste_burnout_and_augmentation_of_death() -> None:
+    for landing, fade in [
+        ("Kobn begins to move faster.", "Your pet's Haste spell has worn off."),
+        ("Kobn goes berserk.", "Your pet's Burnout IV spell has worn off."),
+        (
+            "Kobn's eyes gleam with madness.",
+            "Your pet's Augmentation of Death spell has worn off.",
+        ),
+    ]:
+        parser = EqlCombatParser("Hero")
+        parser.parse_line(TS + "Kobn told you, 'Attacking a goblin Master.'")
+        parser.parse_line(TS + landing)
+        assert parser.haste_state("pet") is HasteState.ACTIVE
+        parser.parse_line(TS + fade)
+        assert parser.haste_state("pet") is HasteState.MISSING
+
+
+def test_charmed_pet_named_haste_fade_and_pet_lifecycle_reset_state() -> None:
+    parser = EqlCombatParser("Hero")
+    parser.parse_line(TS + "Bzzazzt has been charmed.")
+    parser.parse_line(TS + "Bzzazzt feels much faster.")
+    assert parser.haste_state("pet") is HasteState.ACTIVE
+    parser.parse_line(TS + "Your Swift Like the Wind spell has worn off of Bzzazzt.")
+    assert parser.haste_state("pet") is HasteState.MISSING
+
+    parser.parse_line(TS + "Bzzazzt feels much faster.")
+    parser.parse_line(TS + "Bzzazzt has been slain by a gargoyle!")
+    assert parser.haste_state("pet") is HasteState.MISSING
+
+    parser.parse_line(TS + "Kobn told you, 'Attacking a goblin Master.'")
+    assert parser.haste_state("pet") is HasteState.MISSING
+
+
+def test_death_sets_missing_and_zone_sets_unknown() -> None:
+    parser = EqlCombatParser("Hero")
+    parser.parse_line(TS + "Kobn told you, 'Attacking a goblin Master.'")
+    parser.parse_line(TS + "You feel much faster.")
+    parser.parse_line(TS + "Kobn feels much faster.")
+    parser.parse_line(TS + "You died.")
+    assert parser.haste_state("character") is HasteState.MISSING
+    assert parser.haste_state("pet") is HasteState.MISSING
+
+    parser.parse_line(TS + "You feel much faster.")
+    parser.parse_line(TS + "Kobn told you, 'Attacking a goblin Master.'")
+    parser.parse_line(TS + "Kobn feels much faster.")
+    parser.parse_line(TS + "LOADING, PLEASE WAIT...")
+    assert parser.haste_state("character") is HasteState.UNKNOWN
+    assert parser.haste_state("pet") is HasteState.UNKNOWN
+    assert parser.pet_names == frozenset()

@@ -1,5 +1,6 @@
 """Persistent user preferences."""
 
+import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -36,7 +37,17 @@ class OverlayPreferences:
     log_file: Path | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class LogSearchHistoryEntry:
+    include: str
+    exclude: str = ""
+    lookback_seconds: int | None = 24 * 60 * 60
+    match_case: bool = False
+
+
 class SettingsStore:
+    SEARCH_HISTORY_LIMIT = 20
+
     def __init__(self, settings: QSettings | None = None) -> None:
         self._settings = settings or QSettings("zenoran", "EQL Combat Feed")
 
@@ -128,6 +139,39 @@ class SettingsStore:
 
     def save_log_file(self, path: Path) -> None:
         self._settings.setValue("log/file", str(path))
+        self._settings.sync()
+
+    def load_search_history(self) -> list[LogSearchHistoryEntry]:
+        raw = self._settings.value("search/history", "", str)
+        if not raw:
+            return []
+        try:
+            values = json.loads(raw)
+            return [
+                LogSearchHistoryEntry(
+                    include=value["include"],
+                    exclude=value.get("exclude", ""),
+                    lookback_seconds=value.get("lookback_seconds"),
+                    match_case=bool(value.get("match_case", False)),
+                )
+                for value in values
+                if (
+                    isinstance(value, dict)
+                    and isinstance(value.get("include"), str)
+                    and value["include"]
+                    and isinstance(value.get("exclude", ""), str)
+                    and (
+                        value.get("lookback_seconds") is None
+                        or isinstance(value.get("lookback_seconds"), int)
+                    )
+                )
+            ][: self.SEARCH_HISTORY_LIMIT]
+        except (json.JSONDecodeError, TypeError, KeyError):
+            return []
+
+    def save_search_history(self, history: list[LogSearchHistoryEntry]) -> None:
+        payload = [asdict(entry) for entry in history[: self.SEARCH_HISTORY_LIMIT]]
+        self._settings.setValue("search/history", json.dumps(payload))
         self._settings.sync()
 
     def _migrate_combined_geometry(self, preferences: OverlayPreferences) -> None:

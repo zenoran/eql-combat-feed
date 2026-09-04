@@ -19,6 +19,7 @@ QTest = qt_test.QTest
 controller_module = importlib.import_module("eql_combat_feed.controller")
 CombatFeedController = controller_module.CombatFeedController
 LOG_POLL_INTERVAL_MS = controller_module.LOG_POLL_INTERVAL_MS
+HasteState = importlib.import_module("eql_combat_feed.models").HasteState
 SettingsStore = importlib.import_module("eql_combat_feed.settings").SettingsStore
 
 
@@ -71,6 +72,9 @@ def stop_controller(controller: CombatFeedController) -> None:
     if controller.watcher:
         controller.watcher.close()
     controller.hotkey.unregister()
+    controller.search_hotkey.unregister()
+    controller.search_window.shutdown()
+    controller.wheel_capture.unregister()
     controller.tray.hide()
     controller.window.allow_close()
     controller.window.close()
@@ -115,6 +119,9 @@ def test_controller_routes_live_damage_to_separate_windows(tmp_path: Path) -> No
     assert controller.you_overlay is not controller.pet_overlay
     assert controller.window.isVisible()
     assert controller.window.log_value.text() == str(log)
+    assert controller.search_window.isHidden()
+    assert controller.search_window.log_path == log
+    assert controller.search_hotkey.keys[-1] == ord("G")
 
     controller._save_position("character", QPoint(100, 200))
     controller._save_size("character", QSize(800, 400))
@@ -219,6 +226,40 @@ def test_controller_primes_pet_identity_from_existing_log_tail(tmp_path: Path) -
     assert controller.parser.pet_names == frozenset({"A skeleton"})
     assert [item.event.amount for item in controller.pet_overlay.entries] == [41]
 
+    stop_controller(controller)
+
+
+def test_controller_primes_and_routes_separate_haste_states(tmp_path: Path) -> None:
+    app = QApplication.instance() or QApplication([])
+    log = tmp_path / "eqlog_Hero_freeport.txt"
+    log.write_text(
+        "[Sat Aug 22 10:13:19 2026] You feel much faster.\n"
+        "[Sat Aug 22 10:13:20 2026] Kobn told you, 'Attacking a goblin Master.'\n"
+        "[Sat Aug 22 10:13:21 2026] Kobn feels much faster.\n",
+        encoding="utf-8",
+    )
+    raw = QSettings(str(tmp_path / "haste-prime.ini"), QSettings.Format.IniFormat)
+    raw.setValue("window/split_geometry_migrated", True)
+    controller = CombatFeedController(
+        app, requested_log=str(log), settings=SettingsStore(raw)
+    )
+    app.processEvents()
+
+    assert controller.you_overlay._haste_state is HasteState.ACTIVE
+    assert controller.pet_overlay._haste_state is HasteState.ACTIVE
+    assert controller.you_overlay.entries == ()
+    assert controller.pet_overlay.entries == ()
+
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write("[Sat Aug 22 10:13:22 2026] Your speed returns to normal.\n")
+        handle.write(
+            "[Sat Aug 22 10:13:23 2026] Your pet's Alacrity spell has worn off.\n"
+        )
+    controller._poll_log()
+    app.processEvents()
+
+    assert controller.you_overlay._haste_state is HasteState.MISSING
+    assert controller.pet_overlay._haste_state is HasteState.MISSING
     stop_controller(controller)
 
 

@@ -28,6 +28,7 @@ settings_module = importlib.import_module("eql_combat_feed.settings")
 DpsSnapshot = dps_module.DpsSnapshot
 CombatEvent = models.CombatEvent
 EventKind = models.EventKind
+HasteState = models.HasteState
 CombatFeedOverlay = overlay_module.CombatFeedOverlay
 RESIST_AMOUNT = overlay_module.RESIST_AMOUNT
 SOURCE_COLORS = overlay_module.SOURCE_COLORS
@@ -221,6 +222,41 @@ def test_header_cluster_is_spaced_and_right_anchored() -> None:
             round(marker_rect.center().x()), round(marker_rect.center().y())
         )
         assert marker_pixel.alpha() > 180
+        overlay.close()
+    app.processEvents()
+
+
+def test_header_haste_icon_appears_only_while_active_without_moving_dps() -> None:
+    app = QApplication.instance() or QApplication([])
+    for actor in ("character", "pet"):
+        overlay = CombatFeedOverlay(
+            OverlayPreferences(size=QSize(772, 400), pet_size=QSize(772, 400)), actor
+        )
+        overlay.set_dps(DpsSnapshot(damage=1234, duration=10.0, active=True))
+        actor_rect, _, dps_rect = overlay._header_rects()
+        icon_rect = overlay._haste_icon_rect(actor_rect)
+        anchor = dps_rect.left()
+
+        for state in (HasteState.UNKNOWN, HasteState.MISSING):
+            overlay.set_haste_state(state)
+            image = render(overlay)
+            assert overlay._header_rects()[2].left() == pytest.approx(anchor)
+            assert all(
+                image.pixelColor(x, y).green() < 180
+                for x in range(round(icon_rect.left()), round(icon_rect.right()) + 1)
+                for y in range(round(icon_rect.top()), round(icon_rect.bottom()) + 1)
+            )
+
+        overlay.set_haste_state(HasteState.ACTIVE)
+        image = render(overlay)
+        assert overlay._header_rects()[2].left() == pytest.approx(anchor)
+        green_pixels = 0
+        for x in range(round(icon_rect.left()), round(icon_rect.right()) + 1):
+            for y in range(round(icon_rect.top()), round(icon_rect.bottom()) + 1):
+                pixel = image.pixelColor(x, y)
+                if pixel.green() > 180 and pixel.red() < 180:
+                    green_pixels += 1
+        assert green_pixels > 0
         overlay.close()
     app.processEvents()
 
@@ -517,6 +553,16 @@ def test_miss_text_and_icon_are_smaller_without_changing_hit_sizes() -> None:
 
     overlay.close()
     app.processEvents()
+
+
+def test_character_spell_amounts_are_magenta_while_melee_stays_yellow() -> None:
+    melee = event(123, EventKind.MELEE)
+    spell = event(456, EventKind.SPELL, ability="Ice Comet")
+
+    assert CombatFeedOverlay._amount_color(melee, "character") == overlay_module.CHARACTER_AMOUNT
+    assert CombatFeedOverlay._amount_color(spell, "character") == SOURCE_COLORS[EventKind.SPELL]
+    assert CombatFeedOverlay._amount_color(spell, "character") != overlay_module.CHARACTER_AMOUNT
+
 
 
 def test_critical_amount_is_red_without_extra_label() -> None:

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSy
 
 from . import __version__
 from .dps import EncounterDpsMeter
-from .hotkey import GlobalLockHotkey, GlobalWheelCapture
+from .hotkey import GlobalHotkey, GlobalLockHotkey, GlobalWheelCapture
 from .options import OptionsDialog
 from .overlay import Actor, CombatFeedOverlay
 from .parser import EqlCombatParser, character_name_from_log
@@ -22,6 +22,7 @@ from .process_monitor import (
     is_game_running,
     pid_matches_process,
 )
+from .search_window import LogSearchWindow
 from .settings import SettingsStore
 from .update_check import UpdateChecker
 from .watcher import LogWatcher, discover_log_file, read_recent_lines
@@ -73,6 +74,8 @@ class CombatFeedController(QObject):
         self.window.options_requested.connect(self.show_options)
         self.window.choose_log_requested.connect(self.choose_log)
         self.window.clear_requested.connect(self.clear)
+        self.search_window = LogSearchWindow(self.settings)
+        self.search_window.setWindowIcon(self.app_icon)
 
         self.tray = QSystemTrayIcon(self.app_icon, self.app)
         self.tray.setToolTip(self.app_name)
@@ -99,6 +102,12 @@ class CombatFeedController(QObject):
         self.hotkey = GlobalLockHotkey(self.toggle_locked)
         self.app.installNativeEventFilter(self.hotkey)
         self.hotkey.register()
+        self.search_hotkey = GlobalHotkey(
+            self.search_window.toggle,
+            keys=(GlobalHotkey.VK_CONTROL, GlobalHotkey.VK_MENU, ord("G")),
+        )
+        self.app.installNativeEventFilter(self.search_hotkey)
+        self.search_hotkey.register()
         self.wheel_capture = GlobalWheelCapture(self._route_locked_wheel)
         self.wheel_capture.register()
 
@@ -137,7 +146,9 @@ class CombatFeedController(QObject):
         if self.watcher:
             self.watcher.close()
         self.hotkey.unregister()
+        self.search_hotkey.unregister()
         self.wheel_capture.unregister()
+        self.search_window.shutdown()
         self.tray.hide()
         self.window.allow_close()
         self.window.close()
@@ -167,9 +178,11 @@ class CombatFeedController(QObject):
         self.watcher = watcher
         self.parser = EqlCombatParser(character_name_from_log(path))
         self.window.set_log_path(path)
+        self.search_window.set_log_path(path)
         self.dps_meter.reset()
         self._update_dps_displays()
-        self._prime_pet_identity(path)
+        self._prime_parser_state(path)
+        self._update_haste_displays()
         self.preferences.log_file = path
         self.settings.save_log_file(path)
         self._set_status(f"Watching {path.name}")
@@ -321,6 +334,10 @@ class CombatFeedController(QObject):
             return
         changed = False
         observed_at = monotonic()
+        before_haste = (
+            self.parser.haste_state("character"),
+            self.parser.haste_state("pet"),
+        )
         for event in self.parser.parse_line(line):
             changed |= self.dps_meter.add(event, observed_at)
             actor = CombatFeedOverlay._actor_for_event(event)
@@ -329,12 +346,24 @@ class CombatFeedController(QObject):
             elif actor == "pet":
                 # Hidden Pet windows still retain history but never show themselves.
                 self.pet_overlay.add_event(event)
+        after_haste = (
+            self.parser.haste_state("character"),
+            self.parser.haste_state("pet"),
+        )
+        if after_haste != before_haste:
+            self._update_haste_displays()
         if changed:
             self._update_dps_displays()
 
     def _update_dps_displays(self) -> None:
         self.you_overlay.set_dps(self.dps_meter.snapshot("character"))
         self.pet_overlay.set_dps(self.dps_meter.snapshot("pet"))
+
+    def _update_haste_displays(self) -> None:
+        if self.parser is None:
+            return
+        self.you_overlay.set_haste_state(self.parser.haste_state("character"))
+        self.pet_overlay.set_haste_state(self.parser.haste_state("pet"))
 
     def _route_locked_wheel(self, x: int, y: int, steps: int) -> bool:
         """Consume hooked wheel notches over a visible locked overlay.
@@ -354,18 +383,17 @@ class CombatFeedController(QObject):
         self.pet_overlay.set_status(message, error=error)
         self.window.set_status(message, error=error)
 
-    def _prime_pet_identity(self, path: Path) -> None:
+    def _prime_parser_state(self, path: Path) -> None:
         if self.parser is None:
             return
         try:
-            # Ownership is stateful: "charmed" followed by "charm worn off"
-            # must replay in chronological order. Reverse-scanning finds the
-            # latest handshake quickly but can resurrect a pet that already
-            # expired later in the log.
+            # Pet ownership and haste are stateful. Replay chronologically so a
+            # later fade, death, replacement, or zone transition wins over older
+            # landing/ownership lines without emitting historical combat rows.
             for line in read_recent_lines(path):
                 self.parser.parse_line(line)
         except OSError:
-            LOG.exception("Unable to scan recent log for pet identity")
+            LOG.exception("Unable to scan recent log for parser state")
 
     # Keep read-error recovery near one second even if the poll cadence changes.
     POLL_FAILURE_REOPEN_THRESHOLD = round(

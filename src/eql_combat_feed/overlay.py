@@ -20,7 +20,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QToolTip, QWidget
 
 from .dps import DpsSnapshot
-from .models import CombatEvent, EventKind
+from .models import CombatEvent, EventKind, HasteState
 from .settings import OverlayPreferences
 
 Actor = Literal["character", "pet"]
@@ -39,6 +39,7 @@ CHARACTER_AMOUNT = QColor("#ffff00")
 PET_AMOUNT = QColor("#00ffff")
 RESIST_AMOUNT = QColor("#4da6ff")
 DPS_COLOR = QColor("#7dff00")
+HASTE_ACTIVE_COLOR = QColor("#7dff00")
 HEADER_BACKDROP_COLOR = QColor(4, 7, 10, 210)
 HEADER_DPS_BACKDROP_COLOR = QColor(0, 0, 0, 175)
 BACKDROP_COLOR = QColor(0, 0, 0, 190)
@@ -117,6 +118,8 @@ class CombatFeedOverlay(QWidget):
     HEADER_FONT_BASE = 16.8
     HEADER_ACTOR_GAP = 12.0
     HEADER_DPS_GAP = 8.0
+    HEADER_HASTE_GAP = -2.0
+    HASTE_ICON_WIDTH = 14.0
 
     def __init__(self, preferences: OverlayPreferences, actor: Actor = "character") -> None:
         super().__init__()
@@ -135,6 +138,7 @@ class CombatFeedOverlay(QWidget):
         self._controls_visible = False
         self._locked = False
         self._dps = DpsSnapshot()
+        self._haste_state = HasteState.UNKNOWN
         self._fade_signature: tuple[float, ...] = ()
         self._hover_hold = False
 
@@ -224,6 +228,12 @@ class CombatFeedOverlay(QWidget):
         if snapshot == self._dps:
             return
         self._dps = snapshot
+        self.update()
+
+    def set_haste_state(self, state: HasteState) -> None:
+        if state is self._haste_state:
+            return
+        self._haste_state = state
         self.update()
 
     def clear_entries(self) -> None:
@@ -666,6 +676,8 @@ class CombatFeedOverlay(QWidget):
             accent,
             actor_font,
         )
+        if self._haste_state is HasteState.ACTIVE:
+            self._paint_haste_icon(painter, self._haste_icon_rect(actor_rect))
         if self._dps.duration > 0:
             self._draw_outlined_text(
                 painter,
@@ -689,6 +701,38 @@ class CombatFeedOverlay(QWidget):
             Qt.AlignmentFlag.AlignRight if self.mirrored else Qt.AlignmentFlag.AlignLeft
         )
         return horizontal | Qt.AlignmentFlag.AlignVCenter
+
+    def _haste_icon_rect(self, actor_rect: QRectF) -> QRectF:
+        width = self.HASTE_ICON_WIDTH * self.header_scale
+        if self.mirrored:
+            left = actor_rect.right() + self.HEADER_HASTE_GAP * self.header_scale
+        else:
+            left = actor_rect.left() - self.HEADER_HASTE_GAP * self.header_scale - width
+        return QRectF(left, actor_rect.top(), width, actor_rect.height())
+
+    @staticmethod
+    def _paint_haste_icon(painter: QPainter, rect: QRectF) -> None:
+        # Flat vector silhouette: no Unicode emoji and no heavy outline. At the
+        # real overlay size an outlined 14px bolt collapses into a black blob.
+        width = rect.width() * 0.82
+        height = min(rect.height() * 0.78, width * 1.45)
+        left = rect.center().x() - width / 2
+        top = rect.center().y() - height / 2
+        points = (
+            QPointF(left + width * 0.64, top),
+            QPointF(left + width * 0.14, top + height * 0.55),
+            QPointF(left + width * 0.46, top + height * 0.55),
+            QPointF(left + width * 0.29, top + height),
+            QPointF(left + width * 0.88, top + height * 0.38),
+            QPointF(left + width * 0.55, top + height * 0.38),
+        )
+        path = QPainterPath(points[0])
+        for point in points[1:]:
+            path.lineTo(point)
+        path.closeSubpath()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(HASTE_ACTIVE_COLOR)
+        painter.drawPath(path)
 
     @staticmethod
     def _header_divider_y(background_rect: QRectF) -> float:
@@ -1010,6 +1054,8 @@ class CombatFeedOverlay(QWidget):
             return RESIST_AMOUNT
         if event.kind is EventKind.MISS:
             return QColor("#9a9a9a")
+        if actor == "character" and event.kind is EventKind.SPELL:
+            return SOURCE_COLORS[EventKind.SPELL]
         return CHARACTER_AMOUNT if actor == "character" else PET_AMOUNT
 
     def _paint_title_button(

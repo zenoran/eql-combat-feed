@@ -82,6 +82,8 @@ def main(argv: list[str] | None = None) -> int:
         dev_mode=args.dev,
     )
     app.aboutToQuit.connect(controller.hotkey.unregister)
+    app.aboutToQuit.connect(controller.search_hotkey.unregister)
+    app.aboutToQuit.connect(controller.wheel_capture.unregister)
     return app.exec()
 
 

@@ -10,7 +10,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from .models import CombatEvent, EventKind
+from .models import CombatEvent, EventKind, HasteState
 
 LOG_TS_FMT = "%a %b %d %H:%M:%S %Y"
 LINE_RE = re.compile(
@@ -150,6 +150,29 @@ _SPELL_RANK_RE = re.compile(r"\s+[IVXL]+$")
 SPELL_WORN_OFF_RE = re.compile(
     r"^Your (?P<spell>.+?) spell has worn off of (?P<target>.+?)\.$", re.I
 )
+PET_SPELL_WORN_OFF_RE = re.compile(
+    r"^Your pet's (?P<spell>.+?) spell has worn off\.$", re.I
+)
+PET_HASTE_LAND_RE = re.compile(
+    r"^(?P<pet>.+?) (?:feels much faster|begins to move faster|foams at the mouth|goes berserk)\.$",
+    re.I,
+)
+PET_AUGMENTATION_OF_DEATH_LAND_RE = re.compile(
+    r"^(?P<pet>.+?)[`']s eyes gleam with madness\.$", re.I
+)
+PLAYER_DEATH_RE = re.compile(r"^(?:You died\.|You have been slain by .+?[.!])$", re.I)
+ZONE_RE = re.compile(r"^(?:LOADING, PLEASE WAIT\.\.\.|You have entered .+\.)$", re.I)
+PERSISTENT_HASTE_SPELLS = {
+    "alacrity",
+    "augmentation",
+    "augmentation of death",
+    "burnout",
+    "celerity",
+    "haste",
+    "quickness",
+    "spirit quickening",
+    "swift like the wind",
+}
 CHARM_SPELLS = {
     "allure",
     "allure of the wild",
@@ -204,10 +227,18 @@ class EqlCombatParser:
         self._pets: dict[str, str] = {}
         self._charmed_pets: set[str] = set()
         self._last_charm_cast: float | None = None
+        self._haste_sources: dict[str, set[str]] = {"character": set(), "pet": set()}
+        self._haste_states: dict[str, HasteState] = {
+            "character": HasteState.UNKNOWN,
+            "pet": HasteState.UNKNOWN,
+        }
 
     @property
     def pet_names(self) -> frozenset[str]:
         return frozenset(self._pets.values())
+
+    def haste_state(self, actor: str) -> HasteState:
+        return self._haste_states[actor]
 
     def parse_line(self, line: str) -> list[CombatEvent]:
         parsed = LINE_RE.match(line.strip())
@@ -224,6 +255,32 @@ class EqlCombatParser:
             body = tag.group("body")
             critical |= tag.group("tag").lower() == "critical"
 
+        if body == "You feel much faster.":
+            self._add_haste("character", "standard")
+            return []
+        if body == "Your speed returns to normal.":
+            self._remove_haste("character", "standard")
+            return []
+        if body == "You feel your body pulse with energy.":
+            self._add_haste("character", "augmentation")
+            return []
+        if body == "The pulsing energy fades.":
+            self._remove_haste("character", "augmentation")
+            return []
+        if PLAYER_DEATH_RE.match(body):
+            self._set_haste_missing("character")
+            self._forget_all_pets()
+            return []
+        if ZONE_RE.match(body):
+            # Buffs and pets can survive zoning, but log-only tracking loses the
+            # authoritative continuity signal. Unknown is safer than inventing
+            # either an active or missing state after the loading screen.
+            self._set_haste_unknown("character")
+            self._pets.clear()
+            self._charmed_pets.clear()
+            self._set_haste_unknown("pet")
+            return []
+
         if match := PET_LEADER_RE.match(body):
             if (
                 not self.character_name
@@ -236,6 +293,19 @@ class EqlCombatParser:
             return []
         if match := PET_CHARMED_RE.match(body):
             self._remember_pet(match.group("pet"), charmed=True)
+            return []
+        if match := PET_HASTE_LAND_RE.match(body):
+            if self._is_pet(match.group("pet")):
+                self._add_haste("pet", self._pet_haste_source(body))
+            return []
+        if match := PET_AUGMENTATION_OF_DEATH_LAND_RE.match(body):
+            if self._is_pet(match.group("pet")):
+                self._add_haste("pet", "augmentation of death")
+            return []
+        if match := PET_SPELL_WORN_OFF_RE.match(body):
+            spell = _normalized_spell(match.group("spell"))
+            if self._is_persistent_haste_spell(spell):
+                self._remove_haste("pet", spell)
             return []
         if match := CHARM_CAST_BEGIN_RE.match(body):
             if _normalized_spell(match.group("spell")) in CHARM_SPELLS:
@@ -251,8 +321,12 @@ class EqlCombatParser:
                 self._remember_pet(pet, charmed=True)
             return []
         if match := SPELL_WORN_OFF_RE.match(body):
-            if _normalized_spell(match.group("spell")) in CHARM_SPELLS:
-                self._forget_pet(match.group("target"))
+            spell = _normalized_spell(match.group("spell"))
+            target = match.group("target")
+            if spell in CHARM_SPELLS:
+                self._forget_pet(target)
+            elif self._is_pet(target) and self._is_persistent_haste_spell(spell):
+                self._remove_haste("pet", spell)
             return []
 
         if match := SELF_HIT_RE.match(body):
@@ -511,18 +585,81 @@ class EqlCombatParser:
     def _remember_pet(self, name: str, *, charmed: bool = False) -> None:
         key = name.strip().casefold()
         if key not in self._pets:
-            # EQL exposes one controllable pet at a time. A new ownership
-            # handshake supersedes stale names found earlier in log history.
+            # EQL exposes one controllable pet at a time. A different known pet
+            # proves replacement; the first identity found during startup replay
+            # does not prove whether that already-existing pet is hasted.
+            replacing = bool(self._pets)
             self._pets.clear()
             self._charmed_pets.clear()
+            if replacing:
+                self._set_haste_missing("pet")
         self._pets[key] = name.strip()
         if charmed:
             self._charmed_pets.add(key)
 
     def _forget_pet(self, name: str) -> None:
         key = name.strip().casefold()
+        if key not in self._pets:
+            return
         self._pets.pop(key, None)
         self._charmed_pets.discard(key)
+        self._set_haste_missing("pet")
+
+    def _forget_all_pets(self) -> None:
+        self._pets.clear()
+        self._charmed_pets.clear()
+        self._set_haste_missing("pet")
+
+    @staticmethod
+    def _is_persistent_haste_spell(spell: str) -> bool:
+        # Ranked spells normalize to their base name. Burnout ranks are named
+        # "Burnout II/III/IV", while every other supported family is exact.
+        return spell in PERSISTENT_HASTE_SPELLS or spell.startswith("burnout ")
+
+    @staticmethod
+    def _pet_haste_source(body: str) -> str:
+        lowered = body.casefold()
+        if lowered.endswith(" begins to move faster."):
+            return "haste"
+        if lowered.endswith(" foams at the mouth."):
+            return "spirit quickening"
+        if lowered.endswith(" goes berserk."):
+            return "burnout"
+        return "standard"
+
+    @staticmethod
+    def _haste_family(source: str) -> str:
+        normalized = _normalized_spell(source)
+        if normalized in {"quickness", "alacrity", "celerity", "swift like the wind"}:
+            return "standard"
+        if normalized.startswith("burnout"):
+            return "burnout"
+        return normalized
+
+    def _add_haste(self, actor: str, source: str) -> None:
+        self._haste_sources[actor].add(self._haste_family(source))
+        self._haste_states[actor] = HasteState.ACTIVE
+
+    def _remove_haste(self, actor: str, source: str) -> None:
+        sources = self._haste_sources[actor]
+        family = self._haste_family(source)
+        if family in sources:
+            sources.discard(family)
+        elif not sources:
+            # Startup replay may include a fade without its older landing line.
+            # That fade still proves persistent haste is gone. If another family
+            # is confirmed active, however, an unrelated fade must not clear it.
+            self._haste_states[actor] = HasteState.MISSING
+            return
+        self._haste_states[actor] = HasteState.ACTIVE if sources else HasteState.MISSING
+
+    def _set_haste_unknown(self, actor: str) -> None:
+        self._haste_sources[actor].clear()
+        self._haste_states[actor] = HasteState.UNKNOWN
+
+    def _set_haste_missing(self, actor: str) -> None:
+        self._haste_sources[actor].clear()
+        self._haste_states[actor] = HasteState.MISSING
 
     def _is_charmed_pet(self, name: str) -> bool:
         return name.strip().casefold() in self._charmed_pets
