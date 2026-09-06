@@ -1,11 +1,14 @@
 """EverQuest process detection and transition tracking."""
 
+import logging
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 
 import psutil
+
+LOG = logging.getLogger(__name__)
 
 
 class GameProcessEvent(StrEnum):
@@ -63,9 +66,19 @@ def is_game_running(
 
 
 def foreground_pid() -> int | None:
-    """PID of the process owning the foreground window. Windows only; else None."""
-    if sys.platform != "win32":
-        return None
+    """PID of the process owning the foreground window, or ``None`` if unknown.
+
+    ``None`` means "cannot tell", which callers treat as focused (fail open):
+    a wrong guess hides the feed mid-fight, an unknown just leaves it visible.
+    """
+    if sys.platform == "win32":
+        return _windows_foreground_pid()
+    if sys.platform == "darwin":
+        return _macos_foreground_pid()
+    return None
+
+
+def _windows_foreground_pid() -> int | None:
     import ctypes
     from ctypes import wintypes
 
@@ -78,12 +91,51 @@ def foreground_pid() -> int | None:
     return pid.value or None
 
 
+def _macos_foreground_pid() -> int | None:
+    # NSWorkspace only answers inside a GUI login session (a bundled .app or a
+    # terminal on the desktop); from SSH it returns None, which fails open.
+    try:
+        from AppKit import NSWorkspace  # type: ignore[import-not-found]
+    except ImportError:
+        _warn_once("AppKit unavailable; overlays stay visible regardless of focus")
+        return None
+    try:
+        front = NSWorkspace.sharedWorkspace().frontmostApplication()
+    except Exception as error:  # noqa: BLE001 — any AppKit hiccup is "unknown", not "hidden"
+        _warn_once(f"NSWorkspace lookup failed ({error!r}); overlays stay visible")
+        return None
+    if front is None:
+        _warn_once("NSWorkspace reports no frontmost application; overlays stay visible")
+        return None
+    return int(front.processIdentifier()) or None
+
+
+_warned: set[str] = set()
+
+
+def _warn_once(message: str) -> None:
+    if message not in _warned:
+        _warned.add(message)
+        LOG.warning(message)
+
+
 def pid_matches_process(
     pid: int, process_names: Iterable[str] = ("eqgame.exe",)
 ) -> bool:
-    """Whether ``pid`` belongs to one of the named executables."""
+    """Whether ``pid`` belongs to one of the named executables.
+
+    On macOS the game runs inside a Wine virtual desktop owned by Wine's own
+    ``explorer.exe /desktop=...``; focusing that desktop window counts as the
+    game being focused too.
+    """
     expected = {name.casefold() for name in process_names}
     try:
-        return psutil.Process(pid).name().casefold() in expected
+        process = psutil.Process(pid)
+        name = process.name().casefold()
+        if name in expected:
+            return True
+        if sys.platform == "darwin" and name == "explorer.exe":
+            return any(arg.casefold().startswith("/desktop=") for arg in process.cmdline())
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.Error):
         return False
+    return False

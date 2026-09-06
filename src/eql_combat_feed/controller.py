@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 from pathlib import Path
 from time import monotonic
 
@@ -12,7 +13,15 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSy
 from . import __version__
 from .dps import EncounterDpsMeter
 from .game_launcher import launch_everquest
-from .hotkey import GlobalHotkey, GlobalLockHotkey, GlobalWheelCapture
+from .hotkey import (
+    GlobalHotkey,
+    GlobalWheelCapture,
+    chord_from_sequence,
+    default_lock_hotkey,
+    default_search_hotkey,
+    hotkey_label,
+)
+from .macos import window_report
 from .options import OptionsDialog
 from .overlay import Actor, CombatFeedOverlay
 from .parser import EqlCombatParser, character_name_from_log
@@ -62,6 +71,7 @@ class CombatFeedController(QObject):
         self._game_exit_prompt_open = False
         self._poll_failures = 0
         self._overlays_hidden = False
+        self._last_foreground_pid: int | None = -1
         self.update_checker = UpdateChecker(__version__, self)
         self.update_checker.update_available.connect(self._on_update_available)
 
@@ -100,15 +110,11 @@ class CombatFeedController(QObject):
         self.focus_timer.setInterval(500)
         self.focus_timer.timeout.connect(self._poll_focus)
 
-        self.hotkey = GlobalLockHotkey(self.toggle_locked)
+        self.hotkey = GlobalHotkey(self.toggle_locked, keys=())
         self.app.installNativeEventFilter(self.hotkey)
-        self.hotkey.register()
-        self.search_hotkey = GlobalHotkey(
-            self.search_window.toggle,
-            keys=(GlobalHotkey.VK_CONTROL, GlobalHotkey.VK_MENU, ord("G")),
-        )
+        self.search_hotkey = GlobalHotkey(self.search_window.toggle, keys=())
         self.app.installNativeEventFilter(self.search_hotkey)
-        self.search_hotkey.register()
+        self._bind_hotkeys()
         self.wheel_capture = GlobalWheelCapture(self._route_locked_wheel)
         self.wheel_capture.register()
 
@@ -213,10 +219,30 @@ class CombatFeedController(QObject):
         if selected:
             self.open_log(selected)
 
+    def _bind_hotkeys(self) -> None:
+        """(Re)register both global chords from preferences; unsupported text falls back."""
+        lock = chord_from_sequence(self.preferences.lock_hotkey) or chord_from_sequence(
+            default_lock_hotkey()
+        )
+        search = chord_from_sequence(self.preferences.search_hotkey) or chord_from_sequence(
+            default_search_hotkey()
+        )
+        self.hotkey.rebind(lock)
+        self.search_hotkey.rebind(search)
+        self.search_window.set_hotkey_label(hotkey_label(self.preferences.search_hotkey))
+        LOG.info(
+            "Hotkeys bound: lock=%s (registered=%s) search=%s (registered=%s)",
+            self.preferences.lock_hotkey,
+            self.hotkey.registered,
+            self.preferences.search_hotkey,
+            self.search_hotkey.registered,
+        )
+
     def toggle_locked(self) -> None:
         self.set_locked(not self.you_overlay.locked)
 
     def set_locked(self, locked: bool, *, notify: bool = True) -> None:
+        LOG.info("Overlays %s", "locked" if locked else "unlocked")
         self.you_overlay.set_locked(locked)
         self.pet_overlay.set_locked(locked)
         self.preferences.locked = locked
@@ -224,14 +250,23 @@ class CombatFeedController(QObject):
         self.lock_action.setChecked(locked)
         self.window.sync_preferences(self.preferences)
         if notify:
-            mode = "Locked — Ctrl+Alt+L to unlock" if locked else "Move mode — drag either window"
+            mode = (
+                f"Locked — {hotkey_label(self.preferences.lock_hotkey)} to unlock"
+                if locked
+                else "Move mode — drag either window"
+            )
             self.tray.showMessage(
                 self.app_name, mode, QSystemTrayIcon.MessageIcon.Information, 1200
             )
 
     def show_options(self) -> None:
         dialog = OptionsDialog(self.preferences, self.window)
+        # Pause the global chords so recording a new one doesn't toggle the lock
+        # or pop the search window mid-dialog; _bind_hotkeys restores them.
+        self.hotkey.unregister()
+        self.search_hotkey.unregister()
         if dialog.exec() != dialog.DialogCode.Accepted:
+            self._bind_hotkeys()
             return
         updated = dialog.result_preferences(self.preferences)
         previous_log = self.log_path
@@ -249,6 +284,7 @@ class CombatFeedController(QObject):
         self.window.sync_preferences(updated)
         if updated.log_file and updated.log_file != previous_log:
             self.open_log(updated.log_file)
+        self._bind_hotkeys()
 
     def set_show_pet(self, visible: bool) -> None:
         self.preferences.show_pet = visible
@@ -275,6 +311,7 @@ class CombatFeedController(QObject):
         hidden = self._should_hide_overlays()
         if hidden != self._overlays_hidden:
             self._overlays_hidden = hidden
+            LOG.info("Overlays %s", "hidden" if hidden else "shown")
             self._apply_overlay_visibility()
 
     def _should_hide_overlays(self) -> bool:
@@ -288,9 +325,21 @@ class CombatFeedController(QObject):
         if not self.preferences.hide_when_unfocused:
             return False
         pid = foreground_pid()
+        if pid != self._last_foreground_pid:
+            self._last_foreground_pid = pid
+            is_game = pid is not None and pid_matches_process(pid)
+            LOG.info("Foreground pid %s (game=%s)", pid, is_game)
+            if is_game and sys.platform == "darwin" and LOG.isEnabledFor(logging.DEBUG):
+                # Report after the visibility change below has been applied.
+                QTimer.singleShot(1500, lambda: self._log_window_report(pid))
         if pid is None or pid == os.getpid():
             return False
         return not pid_matches_process(pid)
+
+    def _log_window_report(self, game_pid: int) -> None:
+        LOG.debug("Overlays hidden=%s; window server view:", self._overlays_hidden)
+        for line in window_report({game_pid, os.getpid()}):
+            LOG.debug("Window: %s", line)
 
     def _on_update_available(self, version: str, url: str) -> None:
         self.window.show_update_available(version, url)
@@ -337,7 +386,8 @@ class CombatFeedController(QObject):
             "Separate YOU and PET outgoing-damage windows for EverQuest Legends.\n\n"
             "Move and resize either window independently.\n"
             "Disable the Pet window in Options for classes without pets.\n"
-            "Use Ctrl+Alt+L to toggle locked click-through mode.",
+            f"Use {hotkey_label(self.preferences.lock_hotkey)} to toggle locked click-through "
+            "mode (change it in Options → Behavior → Hotkeys).",
         )
 
     def _handle_line(self, line: str) -> None:

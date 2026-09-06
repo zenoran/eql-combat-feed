@@ -7,13 +7,49 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 qt_core = pytest.importorskip("PySide6.QtCore", exc_type=ImportError)
+qt_gui = pytest.importorskip("PySide6.QtGui", exc_type=ImportError)
 qt_widgets = pytest.importorskip("PySide6.QtWidgets", exc_type=ImportError)
 QPoint = qt_core.QPoint
 QSize = qt_core.QSize
+QKeySequence = qt_gui.QKeySequence
 QApplication = qt_widgets.QApplication
+QDialog = qt_widgets.QDialog
 QGroupBox = qt_widgets.QGroupBox
-OptionsDialog = importlib.import_module("eql_combat_feed.options").OptionsDialog
+hotkey_module = importlib.import_module("eql_combat_feed.hotkey")
+options_module = importlib.import_module("eql_combat_feed.options")
+OptionsDialog = options_module.OptionsDialog
 OverlayPreferences = importlib.import_module("eql_combat_feed.settings").OverlayPreferences
+
+
+def test_options_dialog_records_hotkeys_and_rejects_bare_keys() -> None:
+    app = QApplication.instance() or QApplication([])
+    current = OverlayPreferences()
+    dialog = OptionsDialog(current)
+    assert dialog.lock_hotkey.keySequence().toString() == QKeySequence(
+        current.lock_hotkey
+    ).toString()
+
+    dialog.lock_hotkey.setKeySequence(QKeySequence("Ctrl+Shift+F9"))
+    dialog.search_hotkey.setKeySequence(QKeySequence())  # cleared → default
+    result = dialog.result_preferences(current)
+    assert result.lock_hotkey == "Ctrl+Shift+F9"
+    assert result.search_hotkey == hotkey_module.default_search_hotkey()
+
+    dialog.search_hotkey.setKeySequence(QKeySequence("G"))
+    dialog.accept()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert not dialog.hotkey_warning.isHidden()
+    assert "Log search" in dialog.hotkey_warning.text()
+
+    dialog.search_hotkey.setKeySequence(QKeySequence("Alt+Space"))
+    dialog.accept()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert dialog.result_preferences(current).search_hotkey == "Alt+Space"
+
+    dialog._reset_defaults()
+    assert dialog.result_preferences(current).lock_hotkey == hotkey_module.default_lock_hotkey()
+    dialog.close()
+    app.processEvents()
 
 
 def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> None:
@@ -76,10 +112,34 @@ def test_options_dialog_organizes_controls_into_labeled_tabs() -> None:
         "Text decay",
         "History and encounters",
         "Interaction",
+        "Hotkeys",
         "Log source",
         "Application",
     }
     assert dialog.tabs.widget(1).isAncestorOf(dialog.reveal_faded_rows_on_hover)
+    assert dialog.tabs.widget(1).isAncestorOf(dialog.lock_hotkey)
+    log_group = next(
+        group for group in dialog.findChildren(QGroupBox) if group.title() == "Log source"
+    )
+    assert isinstance(log_group.layout(), qt_widgets.QHBoxLayout)
+    assert log_group.layout().stretch(1) == 1
+
+    form_layouts = dialog.findChildren(qt_widgets.QFormLayout)
+    label_widths = {
+        form.itemAt(row, qt_widgets.QFormLayout.ItemRole.LabelRole).widget().minimumWidth()
+        for form in form_layouts
+        for row in range(form.rowCount())
+    }
+    assert label_widths == {options_module.FORM_LABEL_WIDTH}
+    assert dialog.damage_font_size.sizePolicy().horizontalPolicy() == (
+        qt_widgets.QSizePolicy.Policy.Expanding
+    )
+    assert dialog.max_rows.sizePolicy().horizontalPolicy() == (
+        qt_widgets.QSizePolicy.Policy.Expanding
+    )
+    assert dialog.lock_hotkey.sizePolicy().horizontalPolicy() == (
+        qt_widgets.QSizePolicy.Policy.Expanding
+    )
 
     dialog.fade_rows.setChecked(False)
     assert dialog.fade_delay.isEnabled() is False

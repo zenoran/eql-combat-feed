@@ -36,15 +36,15 @@ opaque panel covering the game. No bundled combat-analysis suite.
   the public GitHub releases API that sends nothing but a version string in
   the User-Agent. Turn it off in Options and the app makes no connections at
   all.
-- Provides an on-demand local log search with **Ctrl+Alt+G**. It supports Include
+- Provides an on-demand local log search with **Ctrl+Alt+G** (rebindable). It supports Include
   and Exclude regexes, any lookback duration entered in minutes (`0` means all time),
   highlighted matches, chronological results, and a local recent-search picker.
   Search runs against the selected log
   only; no log content is transmitted.
-- Watches only the four keys used by the **Ctrl+Alt+L** lock toggle and
-  **Ctrl+Alt+G** search toggle. Click-through overlays ignore mouse input by
+- Watches only the keys used by the lock toggle (default **Ctrl+Alt+L**) and
+  search toggle (default **Ctrl+Alt+G**). Click-through overlays ignore mouse input by
   design, so these chords must work while the game has focus; the app polls only
-  the up/down state of Ctrl, Alt, L, and G through the standard Windows
+  the up/down state of the modifier and key you chose through the standard Windows
   `GetAsyncKeyState` call. It never sees, buffers, or records anything you type,
   and the [source](src/eql_combat_feed/hotkey.py) is short enough to check yourself.
 
@@ -54,11 +54,15 @@ be one.
 
 ## Install
 
-Download `EQL-Combat-Feed-Setup-<version>.exe` from the
-[latest release](https://github.com/zenoran/eql-combat-feed/releases/latest) and run it.
-The installer is self-contained—Python is not required.
+Download the build for your platform from the
+[latest release](https://github.com/zenoran/eql-combat-feed/releases/latest):
 
-It installs per-user by default, adds **EQL Combat Feed** to the Start Menu, registers
+- Windows: `EQL-Combat-Feed-Setup-<version>.exe`
+- Apple Silicon macOS: `EQL-Combat-Feed-<version>.dmg`
+
+Both builds are self-contained—Python is not required.
+
+The Windows installer installs per-user by default, adds **EQL Combat Feed** to the Start Menu, registers
 a normal Windows uninstall entry, and offers optional Desktop and login-startup
 shortcuts.
 
@@ -110,6 +114,9 @@ persisted and can be changed later.
 - Right-click either overlay or the tray icon for controls.
 - **Ctrl+Alt+L** locks/unlocks both overlays globally.
 - **Ctrl+Alt+G** opens the local log-search popup; press it again or Escape to hide it.
+- Both chords are rebindable in **Options → Behavior → Hotkeys** (click the field,
+  press the new combination; clear it to restore the default). Any modifier plus a
+  letter, digit, F-key, or Space works; the macOS defaults are Control+Option.
 - Mouse wheel reviews the hovered overlay's retained history.
 - Double-click an unlocked overlay to clear its history.
 
@@ -144,6 +151,37 @@ Build the Windows executable and installer on Windows with:
 ```
 
 The finished installer is written to `dist/`.
+
+### macOS (osxEQL)
+
+EQL Combat Feed also runs natively on Apple Silicon Macs that play EQL through
+[osxEQL](https://github.com/sowoky/osxEQL) (Wine + DXMT). It reads the same
+`eqlog_*.txt` the game writes inside the osxEQL Wine prefix
+(`~/Library/Application Support/osxEQL/prefix/…/EverQuest Legends/Logs`) and is
+discovered automatically; **Choose log…** still works for anything else.
+
+Build the app bundle and disk image on macOS with:
+
+```bash
+packaging/macos/build.sh
+```
+
+`dist/EQL Combat Feed.app` and `dist/EQL-Combat-Feed-<version>.dmg` are produced
+by PyInstaller and ad-hoc signed, so Gatekeeper wants a right-click → **Open**
+the first time. Platform differences:
+
+- **Ctrl+Option+L** and **Ctrl+Option+G** (or whatever you rebind them to) are
+  registered through the system hot-key API (`RegisterEventHotKey`); no
+  Accessibility or Input Monitoring permission is requested and no other
+  keystrokes ever reach the app. If a chord is silently owned by another app or a
+  Karabiner remap, pick a different one in Options.
+- Scrolling history over a **locked** overlay is Windows-only (it needs a
+  low-level mouse hook). Unlock to scroll on macOS.
+- "Launch EverQuest when Combat Feed starts" opens the osxEQL app instead of
+  running `LaunchPad.exe`; osxEQL then starts the real launcher itself.
+- Overlays join all macOS Spaces and float above osxEQL's full-screen game.
+  The app runs as a menu-bar accessory (no Dock or Cmd-Tab entry); use its menu-bar
+  icon or control window to access it.
 
 ## Architecture
 

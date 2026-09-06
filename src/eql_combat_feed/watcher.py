@@ -73,11 +73,27 @@ def _open_shared(path: Path, mode: str = "r") -> IO[str] | IO[bytes]:
         raise
 
 
+# Relative to the Wine prefix root: osxEQL installs the game under the Windows
+# "Public" profile exactly as the Windows installer does.
+WINE_GAME_LOG_DIR = Path(
+    "drive_c/users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs"
+)
+
+
+def macos_osxeql_log_directories(home: Path | None = None) -> Iterable[Path]:
+    """Log folders inside osxEQL's Wine prefixes (active first, then the fallback)."""
+    root = (home or Path.home()) / "Library" / "Application Support" / "osxEQL"
+    yield root / "prefix" / WINE_GAME_LOG_DIR
+    yield root / "prefix-cx" / WINE_GAME_LOG_DIR
+
+
 def candidate_log_directories() -> Iterable[Path]:
     explicit = os.environ.get("EQL_LOG_DIR")
     if explicit:
         yield Path(explicit).expanduser()
     yield DEFAULT_WINDOWS_LOG_DIR
+    if sys.platform == "darwin":
+        yield from macos_osxeql_log_directories()
     yield Path.home() / "EverQuest Legends" / "Logs"
     yield Path.home() / "AppData" / "Local" / "EverQuest Legends" / "Logs"
 

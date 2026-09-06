@@ -152,3 +152,27 @@ def test_stale_requested_log_falls_back_to_directory_scan(
     monkeypatch.setenv("EQL_LOG_DIR", str(tmp_path))
     monkeypatch.delenv("EQL_LOG_FILE", raising=False)
     assert discover_log_file(tmp_path / "eqlog_Gone_missing.txt") == real
+
+
+def test_macos_discovery_scans_osxeql_prefixes_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prefixes = tmp_path / "Library" / "Application Support" / "osxEQL"
+    active = prefixes / "prefix" / watcher_module.WINE_GAME_LOG_DIR
+    fallback = prefixes / "prefix-cx" / watcher_module.WINE_GAME_LOG_DIR
+
+    assert list(watcher_module.macos_osxeql_log_directories(tmp_path)) == [active, fallback]
+
+    monkeypatch.setattr(watcher_module.sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.delenv("EQL_LOG_DIR", raising=False)
+    monkeypatch.delenv("EQL_LOG_FILE", raising=False)
+    assert active in list(watcher_module.candidate_log_directories())
+
+    # An empty Logs folder (only dbg.txt) is "no log yet", never a crash.
+    active.mkdir(parents=True)
+    (active / "dbg.txt").write_text("", encoding="utf-8")
+    assert discover_log_file() is None
+    log = active / "eqlog_Hero_freeport.txt"
+    log.write_text("", encoding="utf-8")
+    assert discover_log_file() == log

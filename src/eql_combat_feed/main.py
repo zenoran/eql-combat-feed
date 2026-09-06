@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from . import __version__
 from .controller import CombatFeedController
+from .macos import become_accessory_app
 from .settings import SettingsStore
 
 
@@ -61,6 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     configure_windows_identity(dev_mode=args.dev)
     app = QApplication(sys.argv if argv is None else [sys.argv[0], *argv])
+    become_accessory_app()
     app_name = "EQL Combat Feed DEV" if args.dev else "EQL Combat Feed"
     app.setApplicationName(app_name)
     app.setApplicationVersion(__version__)

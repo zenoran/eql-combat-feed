@@ -1,6 +1,9 @@
-name: Windows release
+name: Cross-platform release
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     tags:
       - "v*"
@@ -9,7 +12,6 @@ on:
       tag:
         description: "Release tag to build"
         required: true
-        default: "v0.12.0"
 
 permissions:
   contents: write
@@ -45,17 +47,85 @@ jobs:
         shell: powershell
         run: .\packaging\windows\build.ps1
 
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: dist/EQL-Combat-Feed-Setup-*.exe
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        run: uv sync --extra dev --extra build
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      - name: Run lint
+        run: uv run ruff check .
+
+      - name: Build app and disk image
+        run: packaging/macos/build.sh
+
+      - name: Upload macOS disk image
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: dist/EQL-Combat-Feed-*.dmg
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-release"
+          path: dist
+          merge-multiple: true
+
       - name: Publish GitHub release
-        shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+          PUSHED_TAG: ${{ github.ref_name }}
         run: |
-          $version = (Get-Content pyproject.toml | Select-String '^version = "(.+)"$').Matches.Groups[1].Value
-          $installer = "dist\EQL-Combat-Feed-Setup-$version.exe"
-          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch") { "${{ inputs.tag }}" } else { "${{ github.ref_name }}" }
-          $releaseExists = gh release list --json tagName --jq ".[] | select(.tagName == `"$tag`") | .tagName"
-          if ($releaseExists) {
-            gh release upload $tag $installer --clobber
-          } else {
-            gh release create $tag $installer --generate-notes --title "EQL Combat Feed $version"
-          }
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml)
+          tag="$PUSHED_TAG"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="$REQUESTED_TAG"
+          fi
+          if [ "$tag" != "v$version" ]; then
+            echo "Release tag $tag does not match project version $version" >&2
+            exit 1
+          fi
+          mapfile -t artifacts < <(find dist -maxdepth 1 -type f | sort)
+          if [ "${#artifacts[@]}" -ne 2 ]; then
+            echo "Expected Windows installer and macOS disk image; found ${#artifacts[@]}" >&2
+            printf '%s\n' "${artifacts[@]}"
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${artifacts[@]}" --clobber
+          else
+            gh release create "$tag" "${artifacts[@]}" \
+              --generate-notes --title "EQL Combat Feed $version"
+          fi

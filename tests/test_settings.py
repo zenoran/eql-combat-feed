@@ -47,6 +47,28 @@ def test_settings_round_trip_split_window_configuration(tmp_path: Path) -> None:
     assert loaded == preferences
 
 
+def test_hotkeys_round_trip_and_invalid_values_fall_back(tmp_path: Path) -> None:
+    hotkey_module = importlib.import_module("eql_combat_feed.hotkey")
+    settings_file = tmp_path / "hotkeys.ini"
+    settings = QSettings(str(settings_file), QSettings.Format.IniFormat)
+    settings.setValue("window/split_geometry_migrated", True)
+    store = SettingsStore(settings)
+
+    store.save(OverlayPreferences(lock_hotkey="Ctrl+Shift+F9", search_hotkey="Alt+Space"))
+    assert settings.value("hotkeys/lock") == "Ctrl+Shift+F9"
+    assert settings.value("hotkeys/search") == "Alt+Space"
+    loaded = SettingsStore(QSettings(str(settings_file), QSettings.Format.IniFormat)).load()
+    assert loaded.lock_hotkey == "Ctrl+Shift+F9"
+    assert loaded.search_hotkey == "Alt+Space"
+
+    settings.setValue("hotkeys/lock", "L")  # unmodified key: never allowed
+    settings.setValue("hotkeys/search", "")
+    settings.sync()
+    reloaded = SettingsStore(QSettings(str(settings_file), QSettings.Format.IniFormat)).load()
+    assert reloaded.lock_hotkey == hotkey_module.default_lock_hotkey()
+    assert reloaded.search_hotkey == hotkey_module.default_search_hotkey()
+
+
 def test_search_history_round_trips_and_ignores_malformed_data(tmp_path: Path) -> None:
     settings = QSettings(str(tmp_path / "history.ini"), QSettings.Format.IniFormat)
     store = SettingsStore(settings)
