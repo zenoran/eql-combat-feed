@@ -1,10 +1,12 @@
 """Persistent user preferences."""
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSettings, QSize
+
+from .hotkey import chord_from_sequence, default_lock_hotkey, default_search_hotkey
 
 
 @dataclass(slots=True)
@@ -31,6 +33,10 @@ class OverlayPreferences:
     hide_when_unfocused: bool = True
     check_updates: bool = True
     locked: bool = False
+    # Portable Qt key-sequence text (``Ctrl+Alt+L``); validated on load and
+    # replaced by the platform default when empty or unsupported.
+    lock_hotkey: str = field(default_factory=default_lock_hotkey)
+    search_hotkey: str = field(default_factory=default_search_hotkey)
     position: QPoint | None = None
     size: QSize | None = None
     pet_position: QPoint | None = None
@@ -85,6 +91,8 @@ class SettingsStore:
             hide_when_unfocused=self._settings.value("app/hide_when_unfocused", True, bool),
             check_updates=self._settings.value("app/check_updates", True, bool),
             locked=self._settings.value("window/locked", False, bool),
+            lock_hotkey=self._hotkey("hotkeys/lock", default_lock_hotkey()),
+            search_hotkey=self._hotkey("hotkeys/search", default_search_hotkey()),
             position=position if isinstance(position, QPoint) else None,
             size=size if isinstance(size, QSize) else None,
             pet_position=pet_position if isinstance(pet_position, QPoint) else None,
@@ -96,28 +104,30 @@ class SettingsStore:
 
     def save(self, preferences: OverlayPreferences) -> None:
         values = asdict(preferences)
-        for field, value in values.items():
-            if field in {"position", "size"}:
-                self._settings.setValue(f"window/{field}", value)
-            elif field in {"pet_position", "pet_size"}:
-                key = field.removeprefix("pet_")
+        for name, value in values.items():
+            if name in {"position", "size"}:
+                self._settings.setValue(f"window/{name}", value)
+            elif name in {"pet_position", "pet_size"}:
+                key = name.removeprefix("pet_")
                 self._settings.setValue(f"pet_window/{key}", value)
-            elif field == "locked":
+            elif name == "locked":
                 self._settings.setValue("window/locked", value)
-            elif field == "auto_quit_with_game":
+            elif name in {"lock_hotkey", "search_hotkey"}:
+                self._settings.setValue(f"hotkeys/{name.removesuffix('_hotkey')}", value)
+            elif name == "auto_quit_with_game":
                 self._settings.setValue("app/auto_quit_with_game", value)
-            elif field == "launch_eq_on_startup":
+            elif name == "launch_eq_on_startup":
                 self._settings.setValue("app/launch_eq_on_startup", value)
-            elif field == "minimize_to_tray":
+            elif name == "minimize_to_tray":
                 self._settings.setValue("app/minimize_to_tray", value)
-            elif field == "hide_when_unfocused":
+            elif name == "hide_when_unfocused":
                 self._settings.setValue("app/hide_when_unfocused", value)
-            elif field == "check_updates":
+            elif name == "check_updates":
                 self._settings.setValue("app/check_updates", value)
-            elif field == "log_file":
+            elif name == "log_file":
                 self._settings.setValue("log/file", str(value) if value else "")
             else:
-                self._settings.setValue(f"display/{field}", value)
+                self._settings.setValue(f"display/{name}", value)
         self._settings.setValue("window/split_geometry_migrated", True)
         self._settings.sync()
 
@@ -238,6 +248,10 @@ class SettingsStore:
         self._settings.setValue("display/header_font_size", header_size)
         self._settings.sync()
         return damage_size, header_size
+
+    def _hotkey(self, key: str, default: str) -> str:
+        value = self._settings.value(key, "", str).strip()
+        return value if value and chord_from_sequence(value) else default
 
     def _bounded_int(self, key: str, default: int, minimum: int, maximum: int) -> int:
         value = self._settings.value(key, default, int)

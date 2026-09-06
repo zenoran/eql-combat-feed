@@ -79,7 +79,7 @@ def test_control_window_exposes_persisted_behavior_toggles() -> None:
     assert not window.show_pet.isChecked()
     assert window.auto_quit.isChecked()
 
-    QTest.mouseClick(window.auto_quit, Qt.MouseButton.LeftButton)
+    window.auto_quit.click()
     assert not window.auto_quit.isChecked()
 
     window.allow_close()

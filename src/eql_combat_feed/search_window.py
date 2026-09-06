@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QColor, QFont, QKeyEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from .log_search import LogSearchResult, search_log
+from .macos import float_above_fullscreen
 from .settings import LogSearchHistoryEntry, SettingsStore
 
 DEFAULT_LOOKBACK_MINUTES = 24 * 60
@@ -76,6 +77,9 @@ class LogSearchWindow(QWidget):
         self.setWindowTitle("EQL Log Search — Ctrl+Alt+G")
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        # macOS hides Tool windows (NSPanel) whenever another app is active —
+        # i.e. exactly when the game has focus. Opt out of that.
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         self.resize(900, 560)
         self.setMinimumSize(560, 320)
         self.setStyleSheet(
@@ -134,6 +138,7 @@ class LogSearchWindow(QWidget):
         self.results = QPlainTextEdit()
         self.results.setReadOnly(True)
         self.results.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._hotkey_label = "Ctrl+Alt+G"
         fixed = self.results.font()
         fixed.setFamily("Consolas")
         self.results.setFont(fixed)
@@ -238,6 +243,20 @@ class LogSearchWindow(QWidget):
         ][: self.settings.SEARCH_HISTORY_LIMIT]
         self.settings.save_search_history(self._history)
         self._refresh_history()
+
+    def showEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        super().showEvent(event)
+        # Deferred: Qt finishes ordering the NSWindow (level, collection
+        # behavior) after QShowEvent, which would undo an immediate tweak.
+        QTimer.singleShot(0, lambda: float_above_fullscreen(self))
+
+    def set_hotkey_label(self, label: str) -> None:
+        """Reflect the configured toggle chord in the title and idle status line."""
+        previous = self._hotkey_label
+        self._hotkey_label = label
+        self.setWindowTitle(f"EQL Log Search — {label}")
+        if self.status.text().startswith(previous):
+            self.status.setText(f"{label} toggles this window · Escape hides it")
 
     def toggle(self) -> None:
         if self.isVisible():

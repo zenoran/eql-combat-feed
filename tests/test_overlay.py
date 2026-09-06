@@ -1060,3 +1060,24 @@ def test_mirror_preferences_are_per_window_and_optional() -> None:
     you.close()
     pet.close()
     app.processEvents()
+
+
+def test_lock_toggle_keeps_window_geometry() -> None:
+    app = QApplication.instance() or QApplication([])
+    overlay = CombatFeedOverlay(OverlayPreferences(), "character")
+    overlay.move(QPoint(240, 180))
+    overlay.resize(700, 320)
+    overlay.show()
+    before = overlay.geometry()
+
+    overlay.set_locked(True)
+    QApplication.processEvents()
+    assert overlay.geometry() == before
+
+    overlay.move(QPoint(300, 260))
+    moved = overlay.geometry()
+    overlay.set_locked(False)
+    QApplication.processEvents()
+    assert overlay.geometry() == moved
+    overlay.close()
+    app.processEvents()

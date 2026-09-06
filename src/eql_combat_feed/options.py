@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -12,16 +13,22 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QKeySequenceEdit,
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from .hotkey import chord_from_sequence, default_lock_hotkey, default_search_hotkey
 from .settings import OverlayPreferences
+
+PORTABLE = QKeySequence.SequenceFormat.PortableText
+FORM_LABEL_WIDTH = 155
 
 
 class OptionsDialog(QDialog):
@@ -36,7 +43,9 @@ class OptionsDialog(QDialog):
         self.damage_font_size.setDecimals(1)
         self.damage_font_size.setSuffix(" pt")
         self.damage_font_size.setSingleStep(1.0)
-        self.damage_font_size.setMinimumWidth(220)
+        self.damage_font_size.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self.damage_font_size.setValue(preferences.damage_font_size)
 
         self.header_font_size = QDoubleSpinBox()
@@ -44,24 +53,28 @@ class OptionsDialog(QDialog):
         self.header_font_size.setDecimals(1)
         self.header_font_size.setSuffix(" pt")
         self.header_font_size.setSingleStep(1.0)
-        self.header_font_size.setMinimumWidth(220)
+        self.header_font_size.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self.header_font_size.setValue(preferences.header_font_size)
 
         self.max_rows = QSpinBox()
         self.max_rows.setRange(3, 20)
-        self.max_rows.setMinimumWidth(130)
+        self.max_rows.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.max_rows.setValue(preferences.max_rows)
 
         self.history_rows = QSpinBox()
         self.history_rows.setRange(10, 1000)
         self.history_rows.setSingleStep(10)
-        self.history_rows.setMinimumWidth(170)
+        self.history_rows.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.history_rows.setValue(preferences.history_rows)
 
         self.encounter_timeout = QSpinBox()
         self.encounter_timeout.setRange(3, 60)
         self.encounter_timeout.setSuffix(" seconds")
-        self.encounter_timeout.setMinimumWidth(200)
+        self.encounter_timeout.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         self.encounter_timeout.setValue(preferences.encounter_timeout)
 
         self.fade_rows = QCheckBox("Fade rows out after inactivity")
@@ -70,7 +83,7 @@ class OptionsDialog(QDialog):
         self.fade_delay = QSpinBox()
         self.fade_delay.setRange(3, 120)
         self.fade_delay.setSuffix(" seconds")
-        self.fade_delay.setMinimumWidth(220)
+        self.fade_delay.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.fade_delay.setValue(preferences.fade_delay)
 
         self.reveal_faded_rows_on_hover = QCheckBox("Reveal faded history on pointer hover")
@@ -116,6 +129,13 @@ class OptionsDialog(QDialog):
         self.locked = QCheckBox("Start and remain click-through until unlocked")
         self.locked.setChecked(preferences.locked)
 
+        self.lock_hotkey = self._hotkey_editor(preferences.lock_hotkey)
+        self.search_hotkey = self._hotkey_editor(preferences.search_hotkey)
+        self.hotkey_warning = QLabel()
+        self.hotkey_warning.setWordWrap(True)
+        self.hotkey_warning.setStyleSheet("color: #e06c75;")
+        self.hotkey_warning.hide()
+
         self.log_file = QLineEdit(str(preferences.log_file or ""))
         browse = QPushButton("Browse…")
         browse.clicked.connect(self._choose_log)
@@ -133,7 +153,8 @@ class OptionsDialog(QDialog):
 
         hint = QLabel(
             "YOU and PET can be moved and resized independently. Pair an unmirrored feed with "
-            "a mirrored feed to place both number lanes at the center. Ctrl+Alt+L always unlocks."
+            "a mirrored feed to place both number lanes at the center. The lock hotkey always "
+            "unlocks."
         )
         hint.setWordWrap(True)
         hint.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -152,18 +173,17 @@ class OptionsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _display_tab(self) -> QWidget:
-        appearance = QFormLayout()
-        appearance.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        appearance.addRow("Damage text size", self.damage_font_size)
-        appearance.addRow("Header text size", self.header_font_size)
-        appearance.addRow("Maximum visible rows", self.max_rows)
+        appearance = self._form_layout()
+        self._add_form_row(appearance, "Damage text size", self.damage_font_size)
+        self._add_form_row(appearance, "Header text size", self.header_font_size)
+        self._add_form_row(appearance, "Maximum visible rows", self.max_rows)
 
         feeds = QVBoxLayout()
         feeds.addWidget(self.show_pet)
         feeds.addWidget(self.show_resists)
-        feed_layouts = QFormLayout()
-        feed_layouts.addRow("YOU feed", self.mirror_character)
-        feed_layouts.addRow("PET feed", self.mirror_pet)
+        feed_layouts = self._form_layout()
+        self._add_form_row(feed_layouts, "YOU feed", self.mirror_character)
+        self._add_form_row(feed_layouts, "PET feed", self.mirror_pet)
         feeds.addLayout(feed_layouts)
 
         layout = QVBoxLayout()
@@ -177,33 +197,40 @@ class OptionsDialog(QDialog):
     def _behavior_tab(self) -> QWidget:
         decay = QVBoxLayout()
         decay.addWidget(self.fade_rows)
-        fade_timing = QFormLayout()
-        fade_timing.addRow("Fade rows after", self.fade_delay)
+        fade_timing = self._form_layout()
+        self._add_form_row(fade_timing, "Fade rows after", self.fade_delay)
         decay.addLayout(fade_timing)
         decay.addWidget(self.reveal_faded_rows_on_hover)
 
-        history = QFormLayout()
-        history.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        history.addRow("History rows per window", self.history_rows)
-        history.addRow("End encounter after", self.encounter_timeout)
+        history = self._form_layout()
+        self._add_form_row(history, "History rows per window", self.history_rows)
+        self._add_form_row(history, "End encounter after", self.encounter_timeout)
 
         interaction = QVBoxLayout()
         interaction.addWidget(self.locked)
         interaction.addWidget(self.hide_when_unfocused)
 
+        hotkeys = QVBoxLayout()
+        hotkey_rows = self._form_layout()
+        self._add_form_row(hotkey_rows, "Lock / unlock overlays", self.lock_hotkey)
+        self._add_form_row(hotkey_rows, "Log search", self.search_hotkey)
+        hotkeys.addLayout(hotkey_rows)
+        hotkeys.addWidget(self.hotkey_warning)
+
         layout = QVBoxLayout()
         layout.addWidget(self._group("Text decay", decay))
         layout.addWidget(self._group("History and encounters", history))
         layout.addWidget(self._group("Interaction", interaction))
+        layout.addWidget(self._group("Hotkeys", hotkeys))
         layout.addStretch()
         tab = QWidget()
         tab.setLayout(layout)
         return tab
 
     def _application_tab(self, log_widget: QWidget) -> QWidget:
-        log = QFormLayout()
-        log.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
-        log.addRow("EverQuest log", log_widget)
+        log = QHBoxLayout()
+        log.addWidget(QLabel("EverQuest log"))
+        log.addWidget(log_widget, 1)
 
         lifecycle = QVBoxLayout()
         lifecycle.addWidget(self.launch_eq_on_startup)
@@ -220,7 +247,22 @@ class OptionsDialog(QDialog):
         return tab
 
     @staticmethod
-    def _group(title: str, layout: QFormLayout | QVBoxLayout) -> QGroupBox:
+    def _form_layout() -> QFormLayout:
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setFormAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        return form
+
+    @staticmethod
+    def _add_form_row(form: QFormLayout, text: str, field: QWidget) -> None:
+        label = QLabel(text)
+        label.setFixedWidth(FORM_LABEL_WIDTH)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.addRow(label, field)
+
+    @staticmethod
+    def _group(title: str, layout: QFormLayout | QHBoxLayout | QVBoxLayout) -> QGroupBox:
         group = QGroupBox(title)
         group.setLayout(layout)
         return group
@@ -228,6 +270,44 @@ class OptionsDialog(QDialog):
     def _sync_fade_controls(self, enabled: bool) -> None:
         self.fade_delay.setEnabled(enabled)
         self.reveal_faded_rows_on_hover.setEnabled(enabled)
+
+    @staticmethod
+    def _hotkey_editor(text: str) -> QKeySequenceEdit:
+        editor = QKeySequenceEdit(QKeySequence(text, PORTABLE))
+        editor.setMaximumSequenceLength(1)
+        editor.setClearButtonEnabled(True)
+        editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        editor.setToolTip(
+            "Click, then press the combination. Needs at least one modifier plus a letter, "
+            "digit, F-key, or Space. Clear it to restore the default."
+        )
+        return editor
+
+    @staticmethod
+    def _hotkey_text(editor: QKeySequenceEdit, default: str) -> str:
+        text = editor.keySequence().toString(PORTABLE).strip()
+        return text or default
+
+    def _invalid_hotkeys(self) -> list[str]:
+        editors = (("Lock / unlock overlays", self.lock_hotkey), ("Log search", self.search_hotkey))
+        return [
+            name
+            for name, editor in editors
+            if editor.keySequence().toString(PORTABLE).strip()
+            and chord_from_sequence(editor.keySequence().toString(PORTABLE)) is None
+        ]
+
+    def accept(self) -> None:  # type: ignore[override]
+        invalid = self._invalid_hotkeys()
+        if invalid:
+            self.hotkey_warning.setText(
+                f"{' and '.join(invalid)}: use at least one modifier (Ctrl, Alt, Shift) plus a "
+                "letter, digit, F-key, or Space."
+            )
+            self.hotkey_warning.show()
+            self.tabs.setCurrentIndex(1)
+            return
+        super().accept()
 
     def result_preferences(self, current: OverlayPreferences) -> OverlayPreferences:
         log_text = self.log_file.text().strip()
@@ -250,6 +330,8 @@ class OptionsDialog(QDialog):
             hide_when_unfocused=self.hide_when_unfocused.isChecked(),
             check_updates=self.check_updates.isChecked(),
             locked=self.locked.isChecked(),
+            lock_hotkey=self._hotkey_text(self.lock_hotkey, default_lock_hotkey()),
+            search_hotkey=self._hotkey_text(self.search_hotkey, default_search_hotkey()),
             position=current.position,
             size=current.size,
             pet_position=current.pet_position,
@@ -289,4 +371,7 @@ class OptionsDialog(QDialog):
         self.hide_when_unfocused.setChecked(defaults.hide_when_unfocused)
         self.check_updates.setChecked(defaults.check_updates)
         self.locked.setChecked(defaults.locked)
+        self.lock_hotkey.setKeySequence(QKeySequence(defaults.lock_hotkey, PORTABLE))
+        self.search_hotkey.setKeySequence(QKeySequence(defaults.search_hotkey, PORTABLE))
+        self.hotkey_warning.hide()
         self.log_file.clear()

@@ -1,10 +1,11 @@
 """Frameless, high-contrast, single-actor damage feed window."""
 
+import sys
 from dataclasses import dataclass
 from time import monotonic
 from typing import Literal
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QCursor,
@@ -20,6 +21,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QToolTip, QWidget
 
 from .dps import DpsSnapshot
+from .macos import float_above_fullscreen
 from .models import CombatEvent, EventKind, HasteState
 from .settings import OverlayPreferences
 
@@ -144,12 +146,19 @@ class CombatFeedOverlay(QWidget):
 
         actor_name = "You" if actor == "character" else "Pet"
         self.setWindowTitle(f"EQL Combat Feed — {actor_name}")
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-        )
+        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+        if sys.platform == "darwin":
+            # Verified configuration for riding into the game's full-screen
+            # Space (see macos.py): a plain frameless NSWindow that never takes
+            # key focus. A Qt.Tool NSPanel has not been verified there.
+            flags |= Qt.WindowType.WindowDoesNotAcceptFocus
+        else:
+            flags |= Qt.WindowType.Tool
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # macOS hides Tool windows (NSPanel) whenever another app is active —
+        # i.e. exactly when the game has focus. Opt out of that.
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         self.setMouseTracking(True)
         self.setMinimumSize(self.MIN_WIDTH, round(self._minimum_height()))
         self._restore_size(self._saved_size())
@@ -191,8 +200,25 @@ class CombatFeedOverlay(QWidget):
         self.set_locked(preferences.locked)
         self.update()
 
+    def showEvent(self, event) -> None:  # type: ignore[no-untyped-def]
+        super().showEvent(event)
+        # Deferred: Qt finishes ordering the NSWindow (level, collection
+        # behavior) after QShowEvent, which would undo an immediate tweak.
+        # Qt's cached geometry is the intended one even when Cocoa clamped the
+        # fresh NSWindow below the menu bar, so re-assert it (see
+        # _restore_geometry) after the level/Space tweak.
+        intended = self.geometry()
+
+        def settle() -> None:
+            float_above_fullscreen(self, disable_shadow=True)
+            if sys.platform == "darwin":
+                self._restore_geometry(intended)
+
+        QTimer.singleShot(0, settle)
+
     def set_locked(self, locked: bool) -> None:
         was_visible = self.isVisible()
+        geometry = self.geometry()
         self._locked = locked
         if locked:
             self._controls_visible = False
@@ -202,7 +228,35 @@ class CombatFeedOverlay(QWidget):
         self.setCursor(Qt.CursorShape.ArrowCursor if locked else Qt.CursorShape.SizeAllCursor)
         if was_visible:
             self.show()
+            self._restore_geometry(geometry)
         self.update()
+
+    def _restore_geometry(self, geometry: QRect) -> None:
+        """Undo the drift a window-flag flip causes.
+
+        Changing ``WindowTransparentForInput`` recreates the native window. On
+        macOS the re-created NSWindow is clamped below the menu bar (y >= 35 on
+        the built-in display) on its first show — even though the menu bar is
+        hidden while the game is full screen — while Qt's cached geometry keeps
+        the pre-flip value. Comparing against that cache is therefore useless:
+        nudge by a pixel so Qt really pushes a frame, then set the saved rect.
+        A forced set on the visible window sticks (verified 2026-09-06), so do it
+        now and once more after Qt's deferred ordering of the new NSWindow.
+        """
+        if sys.platform != "darwin":
+            if self.geometry() != geometry:
+                self.setGeometry(geometry)
+            return
+
+        def force() -> None:
+            if not self.isVisible():
+                return
+            self.setGeometry(geometry.translated(0, 1))
+            self.setGeometry(geometry)
+
+        force()
+        QTimer.singleShot(0, force)
+        QTimer.singleShot(250, force)
 
     def add_event(self, event: CombatEvent) -> bool:
         if event.kind is EventKind.RESIST and not self.preferences.show_resists:
