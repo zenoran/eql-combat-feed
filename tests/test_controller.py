@@ -47,6 +47,57 @@ def test_log_poll_timer_uses_low_latency_precise_cadence(tmp_path: Path) -> None
     stop_controller(controller)
 
 
+def test_startup_launches_eq_from_resolved_log_when_enabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    app = QApplication.instance() or QApplication([])
+    log = tmp_path / "EverQuest Legends" / "Logs" / "eqlog_Hero_freeport.txt"
+    log.parent.mkdir(parents=True)
+    log.write_text("", encoding="utf-8")
+    raw = QSettings(str(tmp_path / "launch.ini"), QSettings.Format.IniFormat)
+    raw.setValue("app/launch_eq_on_startup", True)
+    raw.sync()
+    launched = []
+    monkeypatch.setattr(controller_module, "is_game_running", lambda: False)
+    monkeypatch.setattr(
+        controller_module,
+        "launch_everquest",
+        lambda path: launched.append(path) or log.parent.parent / "LaunchPad.exe",
+    )
+
+    controller = CombatFeedController(
+        app,
+        requested_log=str(log),
+        settings=SettingsStore(raw),
+    )
+    app.processEvents()
+
+    assert launched == [log]
+    stop_controller(controller)
+
+
+def test_startup_does_not_launch_duplicate_eq_process(tmp_path: Path, monkeypatch) -> None:
+    app = QApplication.instance() or QApplication([])
+    log = tmp_path / "eqlog_Hero_freeport.txt"
+    log.write_text("", encoding="utf-8")
+    raw = QSettings(str(tmp_path / "already-running.ini"), QSettings.Format.IniFormat)
+    raw.setValue("app/launch_eq_on_startup", True)
+    raw.sync()
+    launched = []
+    monkeypatch.setattr(controller_module, "is_game_running", lambda: True)
+    monkeypatch.setattr(controller_module, "launch_everquest", launched.append)
+
+    controller = CombatFeedController(
+        app,
+        requested_log=str(log),
+        settings=SettingsStore(raw),
+    )
+    app.processEvents()
+
+    assert launched == []
+    stop_controller(controller)
+
+
 def test_control_window_is_visible_before_deferred_log_startup(tmp_path: Path) -> None:
     app = QApplication.instance() or QApplication([])
     log = tmp_path / "eqlog_Hero_freeport.txt"

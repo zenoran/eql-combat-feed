@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSy
 
 from . import __version__
 from .dps import EncounterDpsMeter
+from .game_launcher import launch_everquest
 from .hotkey import GlobalHotkey, GlobalLockHotkey, GlobalWheelCapture
 from .options import OptionsDialog
 from .overlay import Actor, CombatFeedOverlay
@@ -126,6 +127,16 @@ class CombatFeedController(QObject):
     def _finish_startup(self) -> None:
         self._poll_game_process()
         self.open_log(self._requested_log)
+        if self.preferences.launch_eq_on_startup and not self.game_tracker.running:
+            try:
+                launcher = launch_everquest(self.log_path or self._requested_log)
+            except OSError:
+                LOG.exception("Unable to launch EverQuest")
+            else:
+                if launcher is None:
+                    LOG.warning("EverQuest launcher not found beside configured log")
+                else:
+                    LOG.info("Started EverQuest launcher: %s", launcher)
         if self.preferences.check_updates and not self.dev_mode:
             QTimer.singleShot(3000, self.update_checker.check)
 

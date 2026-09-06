@@ -97,6 +97,12 @@ class OptionsDialog(QDialog):
         self.auto_quit_with_game = QCheckBox("Automatically quit when EverQuest closes")
         self.auto_quit_with_game.setChecked(preferences.auto_quit_with_game)
 
+        self.launch_eq_on_startup = QCheckBox("Launch EverQuest when Combat Feed starts")
+        self.launch_eq_on_startup.setChecked(preferences.launch_eq_on_startup)
+        self.launch_eq_on_startup.setToolTip(
+            "Finds LaunchPad.exe beside the Logs folder for the selected EverQuest log."
+        )
+
         self.minimize_to_tray = QCheckBox("Closing the control window minimizes to tray")
         self.minimize_to_tray.setChecked(preferences.minimize_to_tray)
 
@@ -200,6 +206,7 @@ class OptionsDialog(QDialog):
         log.addRow("EverQuest log", log_widget)
 
         lifecycle = QVBoxLayout()
+        lifecycle.addWidget(self.launch_eq_on_startup)
         lifecycle.addWidget(self.auto_quit_with_game)
         lifecycle.addWidget(self.minimize_to_tray)
         lifecycle.addWidget(self.check_updates)
@@ -238,6 +245,7 @@ class OptionsDialog(QDialog):
             mirror_character=self.mirror_character.isChecked(),
             mirror_pet=self.mirror_pet.isChecked(),
             auto_quit_with_game=self.auto_quit_with_game.isChecked(),
+            launch_eq_on_startup=self.launch_eq_on_startup.isChecked(),
             minimize_to_tray=self.minimize_to_tray.isChecked(),
             hide_when_unfocused=self.hide_when_unfocused.isChecked(),
             check_updates=self.check_updates.isChecked(),
@@ -276,6 +284,7 @@ class OptionsDialog(QDialog):
         self.mirror_character.setChecked(defaults.mirror_character)
         self.mirror_pet.setChecked(defaults.mirror_pet)
         self.auto_quit_with_game.setChecked(defaults.auto_quit_with_game)
+        self.launch_eq_on_startup.setChecked(defaults.launch_eq_on_startup)
         self.minimize_to_tray.setChecked(defaults.minimize_to_tray)
         self.hide_when_unfocused.setChecked(defaults.hide_when_unfocused)
         self.check_updates.setChecked(defaults.check_updates)

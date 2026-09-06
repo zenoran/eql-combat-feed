@@ -226,6 +226,7 @@ class EqlCombatParser:
         self.character_name = character_name
         self._pets: dict[str, str] = {}
         self._charmed_pets: set[str] = set()
+        self._detached_charmed_pet: str | None = None
         self._last_charm_cast: float | None = None
         self._haste_sources: dict[str, set[str]] = {"character": set(), "pet": set()}
         self._haste_states: dict[str, HasteState] = {
@@ -278,6 +279,7 @@ class EqlCombatParser:
             self._set_haste_unknown("character")
             self._pets.clear()
             self._charmed_pets.clear()
+            self._detached_charmed_pet = None
             self._set_haste_unknown("pet")
             return []
 
@@ -317,15 +319,17 @@ class EqlCombatParser:
                 self._last_charm_cast is not None
                 and 0 <= timestamp - self._last_charm_cast <= CHARM_GLAZE_WINDOW_S
             )
-            if recently_charming or self._is_pet(pet):
+            if recently_charming or self._is_pet(pet) or self._is_detached_charmed_pet(pet):
                 self._remember_pet(pet, charmed=True)
             return []
         if match := SPELL_WORN_OFF_RE.match(body):
             spell = _normalized_spell(match.group("spell"))
             target = match.group("target")
             if spell in CHARM_SPELLS:
-                self._forget_pet(target)
-            elif self._is_pet(target) and self._is_persistent_haste_spell(spell):
+                self._forget_pet(target, charm_expired=True)
+            elif (
+                self._is_pet(target) or self._is_detached_charmed_pet(target)
+            ) and self._is_persistent_haste_spell(spell):
                 self._remove_haste("pet", spell)
             return []
 
@@ -493,8 +497,12 @@ class EqlCombatParser:
                         source=source,
                     )
                 ]
-            if self._is_pet(match.group("target")):
-                self._forget_pet(match.group("target"))
+            target = match.group("target")
+            if self._is_pet(target):
+                self._forget_pet(target)
+            elif self._is_detached_charmed_pet(target):
+                self._detached_charmed_pet = None
+                self._set_haste_missing("pet")
             return []
 
         if match := OTHER_HIT_RE.match(body):
@@ -584,30 +592,44 @@ class EqlCombatParser:
 
     def _remember_pet(self, name: str, *, charmed: bool = False) -> None:
         key = name.strip().casefold()
+        resuming_charmed_pet = charmed and key == self._detached_charmed_pet
         if key not in self._pets:
             # EQL exposes one controllable pet at a time. A different known pet
             # proves replacement; the first identity found during startup replay
-            # does not prove whether that already-existing pet is hasted.
-            replacing = bool(self._pets)
+            # does not prove whether that already-existing pet is hasted. Charm
+            # expiry is different: the NPC keeps its buffs, so reclaiming that
+            # same mob must preserve confirmed haste.
+            replacing = bool(self._pets) or (
+                self._detached_charmed_pet is not None and not resuming_charmed_pet
+            )
             self._pets.clear()
             self._charmed_pets.clear()
             if replacing:
                 self._set_haste_missing("pet")
         self._pets[key] = name.strip()
+        self._detached_charmed_pet = None
         if charmed:
             self._charmed_pets.add(key)
 
-    def _forget_pet(self, name: str) -> None:
+    def _forget_pet(self, name: str, *, charm_expired: bool = False) -> None:
         key = name.strip().casefold()
         if key not in self._pets:
             return
+        was_charmed = key in self._charmed_pets
         self._pets.pop(key, None)
         self._charmed_pets.discard(key)
+        if charm_expired and was_charmed:
+            # Charm ending removes ownership, not buffs from the NPC. Hold the
+            # identity so an immediate recharm of the same mob can retain haste.
+            self._detached_charmed_pet = key
+            return
+        self._detached_charmed_pet = None
         self._set_haste_missing("pet")
 
     def _forget_all_pets(self) -> None:
         self._pets.clear()
         self._charmed_pets.clear()
+        self._detached_charmed_pet = None
         self._set_haste_missing("pet")
 
     @staticmethod
@@ -663,6 +685,9 @@ class EqlCombatParser:
 
     def _is_charmed_pet(self, name: str) -> bool:
         return name.strip().casefold() in self._charmed_pets
+
+    def _is_detached_charmed_pet(self, name: str) -> bool:
+        return name.strip().casefold() == self._detached_charmed_pet
 
     def _is_pet(self, name: str) -> bool:
         lowered = name.strip().casefold()

@@ -109,15 +109,18 @@ def test_history_picker_restores_settings_and_reruns(tmp_path, monkeypatch) -> N
 
     assert window.pattern.text() == "loot"
     assert window.exclude_pattern.text() == "minor"
-    assert window.lookback.currentData() == 3600
+    assert window.lookback.value() == 60
     assert window.match_case.isChecked()
     assert calls == [True]
 
     window.pattern.setText("loot")
     window.exclude_pattern.setText("minor")
     window._remember_search()
+    window.lookback.setValue(0)
+    window.match_case.setChecked(False)
     window._remember_search()
-    assert window._history == [entry]
+    replacement = LogSearchHistoryEntry("loot", "minor", None, False)
+    assert window._history == [replacement]
     assert len(window.history_menu.actions()) == 1
 
     history_action = window.history_menu.actions()[0]
@@ -130,6 +133,20 @@ def test_history_picker_restores_settings_and_reruns(tmp_path, monkeypatch) -> N
     empty = window.history_menu.actions()[0]
     assert empty.text() == "No recent searches"
     assert not empty.isEnabled()
+
+    window.shutdown()
+    app.processEvents()
+
+
+def test_lookback_accepts_arbitrary_minutes_and_zero_means_all_time(tmp_path) -> None:
+    app = QApplication.instance() or QApplication([])
+    window = make_window(tmp_path)
+
+    window.lookback.setValue(137)
+    assert window._lookback_seconds() == 137 * 60
+    window.lookback.setValue(0)
+    assert window.lookback.text() == "All time"
+    assert window._lookback_seconds() is None
 
     window.shutdown()
     app.processEvents()

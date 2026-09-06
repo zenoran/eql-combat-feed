@@ -158,6 +158,48 @@ def test_ranked_charm_song_and_bravura_expiry_clear_pet() -> None:
     assert parser.parse_line(swing) == []
 
 
+def test_bard_charm_break_and_silent_renewal_preserve_pet_haste() -> None:
+    parser = EqlCombatParser("Zenoran")
+    parser.parse_line(TS + "You begin singing Solon's Bewitching Bravura III.")
+    parser.parse_line(TS + "an abhorrent's eyes glaze over.")
+    parser.parse_line(TS + "An abhorrent feels much faster.")
+    assert parser.haste_state("pet") is HasteState.ACTIVE
+
+    parser.parse_line(TS + "Your Solon's Bewitching Bravura spell has worn off of an abhorrent.")
+    assert parser.pet_names == frozenset()
+    assert parser.haste_state("pet") is HasteState.ACTIVE
+
+    # A held bard charm can re-land without another "begin singing" line.
+    parser.parse_line(TS + "an abhorrent's eyes glaze over.")
+    assert parser.pet_names == frozenset({"an abhorrent"})
+    assert parser.haste_state("pet") is HasteState.ACTIVE
+
+
+def test_different_pet_after_charm_break_clears_retained_haste() -> None:
+    parser = EqlCombatParser("Zenoran")
+    parser.parse_line(TS + "an abhorrent has been charmed.")
+    parser.parse_line(TS + "An abhorrent feels much faster.")
+    parser.parse_line(TS + "Your Allure spell has worn off of an abhorrent.")
+
+    parser.parse_line(TS + "an ire ghast has been charmed.")
+    assert parser.haste_state("pet") is HasteState.MISSING
+
+
+def test_detached_charmed_pet_haste_fade_and_death_clear_retained_state() -> None:
+    parser = EqlCombatParser("Zenoran")
+    parser.parse_line(TS + "an abhorrent has been charmed.")
+    parser.parse_line(TS + "An abhorrent feels much faster.")
+    parser.parse_line(TS + "Your Allure spell has worn off of an abhorrent.")
+    parser.parse_line(TS + "Your Alacrity spell has worn off of an abhorrent.")
+    assert parser.haste_state("pet") is HasteState.MISSING
+
+    parser.parse_line(TS + "an abhorrent has been charmed.")
+    parser.parse_line(TS + "An abhorrent feels much faster.")
+    parser.parse_line(TS + "Your Allure spell has worn off of an abhorrent.")
+    parser.parse_line(TS + "An abhorrent has been slain by an ire ghast!")
+    assert parser.haste_state("pet") is HasteState.MISSING
+
+
 def test_same_named_hostile_does_not_erase_charmed_pet_identity() -> None:
     """Live trace: one lava crawler is charmed while identical crawlers hit YOU."""
     parser = EqlCombatParser("Zenoran")

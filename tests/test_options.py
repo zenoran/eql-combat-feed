@@ -33,6 +33,7 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
     dialog.reveal_faded_rows_on_hover.setChecked(False)
     dialog.show_pet.setChecked(False)
     dialog.auto_quit_with_game.setChecked(True)
+    dialog.launch_eq_on_startup.setChecked(True)
     dialog.minimize_to_tray.setChecked(True)
     dialog.locked.setChecked(True)
     log = tmp_path / "eqlog_Hero_freeport.txt"
@@ -48,6 +49,7 @@ def test_options_dialog_tracks_split_window_configuration(tmp_path: Path) -> Non
     assert result.reveal_faded_rows_on_hover is False
     assert result.show_pet is False
     assert result.auto_quit_with_game is True
+    assert result.launch_eq_on_startup is True
     assert result.minimize_to_tray is True
     assert result.locked is True
     assert result.position == current.position

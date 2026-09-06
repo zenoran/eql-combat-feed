@@ -7,13 +7,13 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QCloseEvent, QColor, QFont, QKeyEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -23,14 +23,8 @@ from PySide6.QtWidgets import (
 from .log_search import LogSearchResult, search_log
 from .settings import LogSearchHistoryEntry, SettingsStore
 
-LOOKBACKS = (
-    ("15 minutes", 15 * 60),
-    ("1 hour", 60 * 60),
-    ("6 hours", 6 * 60 * 60),
-    ("24 hours", 24 * 60 * 60),
-    ("7 days", 7 * 24 * 60 * 60),
-    ("All time", None),
-)
+DEFAULT_LOOKBACK_MINUTES = 24 * 60
+MAX_LOOKBACK_MINUTES = 10 * 365 * 24 * 60
 
 
 class LogSearchWorker(QThread):
@@ -86,7 +80,7 @@ class LogSearchWindow(QWidget):
         self.setMinimumSize(560, 320)
         self.setStyleSheet(
             "QWidget { background: #11151a; color: #e8edf2; }"
-            "QLineEdit, QComboBox, QPlainTextEdit {"
+            "QLineEdit, QSpinBox, QPlainTextEdit {"
             " background: #080b0e; border: 1px solid #39424c; padding: 6px; }"
             "QPushButton { background: #26313b; border: 1px solid #4c5c6b; padding: 7px 14px; }"
             "QPushButton:hover { background: #32404d; }"
@@ -103,7 +97,7 @@ class LogSearchWindow(QWidget):
         self._refresh_history()
         include_row = QHBoxLayout()
         include_label = QLabel("Include")
-        include_label.setFixedWidth(50)
+        include_label.setFixedWidth(90)
         include_row.addWidget(include_label)
         include_row.addWidget(self.pattern, 1)
         include_row.addWidget(self.history_button)
@@ -113,10 +107,14 @@ class LogSearchWindow(QWidget):
         self.exclude_pattern.setClearButtonEnabled(True)
         self.exclude_pattern.returnPressed.connect(self.search)
 
-        self.lookback = QComboBox()
-        for label, seconds in LOOKBACKS:
-            self.lookback.addItem(label, seconds)
-        self.lookback.setCurrentIndex(3)
+        self.lookback = QSpinBox()
+        self.lookback.setRange(0, MAX_LOOKBACK_MINUTES)
+        self.lookback.setValue(DEFAULT_LOOKBACK_MINUTES)
+        self.lookback.setSuffix(" min")
+        self.lookback.setSpecialValueText("All time")
+        self.lookback.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self.lookback.setToolTip("Enter any number of minutes; use 0 for all time.")
+        self.lookback.setMinimumWidth(118)
 
         self.match_case = QCheckBox("Case sensitive")
         self.search_button = QPushButton("Search")
@@ -124,7 +122,7 @@ class LogSearchWindow(QWidget):
 
         exclude_row = QHBoxLayout()
         exclude_label = QLabel("Exclude")
-        exclude_label.setFixedWidth(50)
+        exclude_label.setFixedWidth(90)
         exclude_row.addWidget(exclude_label)
         exclude_row.addWidget(self.exclude_pattern, 1)
         exclude_row.addWidget(self.lookback)
@@ -204,8 +202,9 @@ class LogSearchWindow(QWidget):
         self.history_menu.close()
         self.pattern.setText(entry.include)
         self.exclude_pattern.setText(entry.exclude)
-        lookback_index = self.lookback.findData(entry.lookback_seconds)
-        self.lookback.setCurrentIndex(max(0, lookback_index))
+        self.lookback.setValue(
+            0 if entry.lookback_seconds is None else max(1, entry.lookback_seconds // 60)
+        )
         self.match_case.setChecked(entry.match_case)
         self.search()
 
@@ -217,15 +216,26 @@ class LogSearchWindow(QWidget):
             self.history_menu.popup(self.history_button.mapToGlobal(self.history_button.rect().bottomLeft()))
 
 
+    def _lookback_seconds(self) -> int | None:
+        minutes = self.lookback.value()
+        return None if minutes == 0 else minutes * 60
+
     def _remember_search(self) -> None:
         entry = LogSearchHistoryEntry(
             include=self.pattern.text(),
             exclude=self.exclude_pattern.text(),
-            lookback_seconds=self.lookback.currentData(),
+            lookback_seconds=self._lookback_seconds(),
             match_case=self.match_case.isChecked(),
         )
-        self._history = [entry, *(old for old in self._history if old != entry)]
-        self._history = self._history[: self.settings.SEARCH_HISTORY_LIMIT]
+        key = (entry.include.strip(), entry.exclude.strip())
+        self._history = [
+            entry,
+            *(
+                old
+                for old in self._history
+                if (old.include.strip(), old.exclude.strip()) != key
+            ),
+        ][: self.settings.SEARCH_HISTORY_LIMIT]
         self.settings.save_search_history(self._history)
         self._refresh_history()
 
@@ -270,7 +280,7 @@ class LogSearchWindow(QWidget):
             self.log_path,
             pattern,
             exclude_pattern,
-            self.lookback.currentData(),
+            self._lookback_seconds(),
             self.match_case.isChecked(),
             self,
         )

@@ -22,7 +22,7 @@ wheels = [
 
 [[package]]
 name = "eql-combat-feed"
-version = "0.20.0"
+version = "0.20.2"
 source = { editable = "." }
 dependencies = [
     { name = "psutil" },

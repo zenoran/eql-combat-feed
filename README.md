@@ -37,8 +37,9 @@ opaque panel covering the game. No bundled combat-analysis suite.
   the User-Agent. Turn it off in Options and the app makes no connections at
   all.
 - Provides an on-demand local log search with **Ctrl+Alt+G**. It supports Include
-  and Exclude regexes, a lookback range, highlighted matches, chronological
-  results, and a local recent-search picker. Search runs against the selected log
+  and Exclude regexes, any lookback duration entered in minutes (`0` means all time),
+  highlighted matches, chronological results, and a local recent-search picker.
+  Search runs against the selected log
   only; no log content is transmitted.
 - Watches only the four keys used by the **Ctrl+Alt+L** lock toggle and
   **Ctrl+Alt+G** search toggle. Click-through overlays ignore mouse input by
@@ -113,9 +114,10 @@ persisted and can be changed later.
 - Double-click an unlocked overlay to clear its history.
 
 Options control text size, visible/history rows, encounter timeout, Pet visibility,
-EQ-close auto-quit behavior, close-button tray behavior, focus-based overlay
-hiding, the startup update check, log selection, and click-through state. All settings and
-both overlay geometries persist.
+EQ launch/close behavior, close-button tray behavior, focus-based overlay hiding,
+the startup update check, log selection, and click-through state. When enabled, the EQ
+startup option finds `LaunchPad.exe` beside the selected log's `Logs` folder; no install
+path is uploaded or hard-coded. All settings and both overlay geometries persist.
 
 Only one instance runs at a time. Runtime errors are written to the platform's local
 application-data directory as `eql-combat-feed.log`.

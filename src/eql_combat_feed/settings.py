@@ -26,6 +26,7 @@ class OverlayPreferences:
     mirror_character: bool = False
     mirror_pet: bool = True
     auto_quit_with_game: bool = False
+    launch_eq_on_startup: bool = False
     minimize_to_tray: bool = False
     hide_when_unfocused: bool = True
     check_updates: bool = True
@@ -79,6 +80,7 @@ class SettingsStore:
             mirror_character=self._settings.value("display/mirror_character", False, bool),
             mirror_pet=self._settings.value("display/mirror_pet", True, bool),
             auto_quit_with_game=self._settings.value("app/auto_quit_with_game", False, bool),
+            launch_eq_on_startup=self._settings.value("app/launch_eq_on_startup", False, bool),
             minimize_to_tray=self._settings.value("app/minimize_to_tray", False, bool),
             hide_when_unfocused=self._settings.value("app/hide_when_unfocused", True, bool),
             check_updates=self._settings.value("app/check_updates", True, bool),
@@ -104,6 +106,8 @@ class SettingsStore:
                 self._settings.setValue("window/locked", value)
             elif field == "auto_quit_with_game":
                 self._settings.setValue("app/auto_quit_with_game", value)
+            elif field == "launch_eq_on_startup":
+                self._settings.setValue("app/launch_eq_on_startup", value)
             elif field == "minimize_to_tray":
                 self._settings.setValue("app/minimize_to_tray", value)
             elif field == "hide_when_unfocused":
@@ -147,7 +151,7 @@ class SettingsStore:
             return []
         try:
             values = json.loads(raw)
-            return [
+            history = [
                 LogSearchHistoryEntry(
                     include=value["include"],
                     exclude=value.get("exclude", ""),
@@ -165,14 +169,33 @@ class SettingsStore:
                         or isinstance(value.get("lookback_seconds"), int)
                     )
                 )
-            ][: self.SEARCH_HISTORY_LIMIT]
+            ]
         except (json.JSONDecodeError, TypeError, KeyError):
             return []
+        normalized = self._unique_search_history(history)
+        if normalized != history:
+            self.save_search_history(normalized)
+        return normalized
 
     def save_search_history(self, history: list[LogSearchHistoryEntry]) -> None:
-        payload = [asdict(entry) for entry in history[: self.SEARCH_HISTORY_LIMIT]]
+        payload = [asdict(entry) for entry in self._unique_search_history(history)]
         self._settings.setValue("search/history", json.dumps(payload))
         self._settings.sync()
+
+    def _unique_search_history(
+        self, history: list[LogSearchHistoryEntry]
+    ) -> list[LogSearchHistoryEntry]:
+        unique: list[LogSearchHistoryEntry] = []
+        seen: set[tuple[str, str]] = set()
+        for entry in history:
+            key = (entry.include.strip(), entry.exclude.strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(entry)
+            if len(unique) == self.SEARCH_HISTORY_LIMIT:
+                break
+        return unique
 
     def _migrate_combined_geometry(self, preferences: OverlayPreferences) -> None:
         if self._settings.value("window/split_geometry_migrated", False, bool):

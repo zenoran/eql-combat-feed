@@ -1,4 +1,5 @@
 import importlib
+import json
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ def test_settings_round_trip_split_window_configuration(tmp_path: Path) -> None:
         mirror_character=True,
         mirror_pet=False,
         auto_quit_with_game=True,
+        launch_eq_on_startup=True,
         minimize_to_tray=True,
         locked=True,
         position=QPoint(321, 654),
@@ -69,6 +71,45 @@ def test_search_history_is_capped(tmp_path: Path) -> None:
     store.save_search_history(history)
 
     assert store.load_search_history() == history[:20]
+
+
+def test_search_history_deduplicates_visible_queries_and_migrates_storage(
+    tmp_path: Path,
+) -> None:
+    settings = QSettings(str(tmp_path / "history-duplicates.ini"), QSettings.Format.IniFormat)
+    settings.setValue(
+        "search/history",
+        json.dumps(
+            [
+                {
+                    "include": "you looted a mote",
+                    "exclude": "",
+                    "lookback_seconds": 3600,
+                    "match_case": False,
+                },
+                {
+                    "include": "you looted a mote",
+                    "exclude": "",
+                    "lookback_seconds": 86400,
+                    "match_case": True,
+                },
+                {
+                    "include": "You looted a mote",
+                    "exclude": "",
+                    "lookback_seconds": 3600,
+                    "match_case": True,
+                },
+            ]
+        ),
+    )
+    store = SettingsStore(settings)
+
+    assert store.load_search_history() == [
+        LogSearchHistoryEntry("you looted a mote", "", 3600, False),
+        LogSearchHistoryEntry("You looted a mote", "", 3600, True),
+    ]
+    persisted = json.loads(settings.value("search/history", "", str))
+    assert len(persisted) == 2
 
 
 def test_old_percentages_migrate_to_equivalent_independent_point_sizes(
